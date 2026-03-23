@@ -96,12 +96,19 @@ export default function Sidebar() {
   const pathname = usePathname();
   const [pendingCount, setPendingCount] = useState(0);
 
-  useEffect(() => {
+  const refreshCount = () => {
     fetch('/api/drama/pending-count')
       .then(res => res.json())
       .then(data => setPendingCount(data.count || 0))
       .catch(() => {});
-  }, [pathname]);
+  };
+
+  useEffect(() => { refreshCount(); }, [pathname]);
+
+  useEffect(() => {
+    const interval = setInterval(refreshCount, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <aside className="w-60 bg-primary-sidebar h-screen flex flex-col border-r border-primary-border shrink-0">
