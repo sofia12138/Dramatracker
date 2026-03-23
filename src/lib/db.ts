@@ -92,6 +92,16 @@ function initDb(db: Database.Database) {
       UNIQUE(playlet_id, platform, record_week)
     );
 
+    CREATE TABLE IF NOT EXISTS ai_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cache_key TEXT UNIQUE NOT NULL,
+      analysis_type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_cache_key ON ai_cache(cache_key);
     CREATE INDEX IF NOT EXISTS idx_ranking_snapshot_date ON ranking_snapshot(snapshot_date);
     CREATE INDEX IF NOT EXISTS idx_ranking_snapshot_playlet ON ranking_snapshot(playlet_id);
     CREATE INDEX IF NOT EXISTS idx_invest_trend_date ON invest_trend(date);

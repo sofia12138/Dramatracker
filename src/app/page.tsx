@@ -8,6 +8,9 @@ import {
   GridComponent, TooltipComponent, LegendComponent, TitleComponent,
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
+import { useAuth } from '@/contexts/AuthContext';
+import AIInsightDrawer from '@/components/AIInsightDrawer';
+import HotAnalysisModal from '@/components/HotAnalysisModal';
 
 echarts.use([BarChart, PieChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer]);
 
@@ -46,6 +49,9 @@ export default function DashboardPage() {
   const [customEnd, setCustomEnd] = useState('');
   const [showCustom, setShowCustom] = useState(false);
   const customRef = useRef<HTMLDivElement>(null);
+  const [insightOpen, setInsightOpen] = useState(false);
+  const [hotOpen, setHotOpen] = useState(false);
+  const { hasPermission } = useAuth();
 
   const fetchData = useCallback((m: TimeMode, sd?: string, ed?: string) => {
     setLoading(true);
@@ -216,6 +222,26 @@ export default function DashboardPage() {
             {data?.latestDate ? `最新数据：${data.latestDate}` : '暂无数据'}
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          {hasPermission('use_ai') && (
+            <>
+              <button onClick={() => setInsightOpen(true)}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-gradient-to-r from-primary-accent to-indigo-500 text-white shadow-sm hover:opacity-90 transition-all">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                生成洞察报告
+              </button>
+              <button onClick={() => setHotOpen(true)}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-lg bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-sm hover:opacity-90 transition-all">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
+                </svg>
+                爆款分析
+              </button>
+            </>
+          )}
+        </div>
         <div className="flex items-center gap-1.5 relative" ref={customRef}>
           {timeTabs.map(t => (
             <button
@@ -363,6 +389,9 @@ export default function DashboardPage() {
           </div>
         </>
       )}
+
+      <AIInsightDrawer open={insightOpen} onClose={() => setInsightOpen(false)} />
+      <HotAnalysisModal open={hotOpen} onClose={() => setHotOpen(false)} />
     </div>
   );
 }

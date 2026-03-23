@@ -2,6 +2,9 @@
 
 import { useEffect, useState, useRef } from 'react';
 import * as echarts from 'echarts';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAIStream } from '@/hooks/useAIStream';
+import AIMarkdown from './AIMarkdown';
 
 interface Drama {
   id: number;
@@ -49,6 +52,9 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
   const heatChartRef = useRef<HTMLDivElement>(null);
   const rankChartRef = useRef<HTMLDivElement>(null);
   const playCountChartRef = useRef<HTMLDivElement>(null);
+  const aiReviewRef = useRef<HTMLDivElement>(null);
+  const { hasPermission } = useAuth();
+  const aiStream = useAIStream();
 
   useEffect(() => {
     if (!playletId) return;
@@ -365,18 +371,57 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
                 )}
               </div>
 
-              {/* AI Review Button */}
-              <div className="pt-2">
-                <button
-                  disabled
-                  className="w-full px-4 py-3 bg-gradient-to-r from-primary-accent to-indigo-500 text-white rounded-lg text-sm font-medium opacity-60 cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  AI 智能点评（即将上线）
-                </button>
-              </div>
+              {/* AI Review */}
+              {hasPermission('use_ai') && (
+                <div className="pt-2 space-y-3">
+                  <button
+                    onClick={() => {
+                      if (aiStream.loading) { aiStream.abort(); return; }
+                      aiStream.reset();
+                      aiStream.generate('drama_review', { playletId });
+                    }}
+                    disabled={!playletId}
+                    className="w-full px-4 py-3 bg-gradient-to-r from-primary-accent to-indigo-500 text-white rounded-lg text-sm font-medium hover:opacity-90 transition-all flex items-center justify-center gap-2"
+                  >
+                    {aiStream.loading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                        停止生成
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        AI 智能点评
+                      </>
+                    )}
+                  </button>
+
+                  {aiStream.error && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                      {aiStream.error}
+                    </div>
+                  )}
+
+                  {aiStream.content && (
+                    <div className="bg-primary-card border border-primary-border rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-medium text-primary-accent">AI 点评</span>
+                        <button onClick={() => navigator.clipboard.writeText(aiStream.content)}
+                          className="text-xs text-primary-text-muted hover:text-primary-accent">
+                          复制
+                        </button>
+                      </div>
+                      <AIMarkdown content={aiStream.content} />
+                      {aiStream.loading && (
+                        <span className="inline-block w-2 h-4 bg-primary-accent animate-pulse ml-0.5" />
+                      )}
+                    </div>
+                  )}
+                  <div ref={aiReviewRef} />
+                </div>
+              )}
             </div>
           </div>
         )}

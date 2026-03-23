@@ -22,14 +22,15 @@ export type Permission =
   | 'manage_play_count'
   | 'manage_data'
   | 'manage_users'
-  | 'manage_settings';
+  | 'manage_settings'
+  | 'use_ai';
 
 const ROLE_PERMISSIONS: Record<string, Permission[]> = {
   super_admin: [
     'view_dashboard', 'view_ranking', 'review_drama', 'export_data',
-    'manage_play_count', 'manage_data', 'manage_users', 'manage_settings',
+    'manage_play_count', 'manage_data', 'manage_users', 'manage_settings', 'use_ai',
   ],
-  operation: ['view_dashboard', 'view_ranking', 'review_drama', 'export_data', 'manage_play_count'],
+  operation: ['view_dashboard', 'view_ranking', 'review_drama', 'export_data', 'manage_play_count', 'use_ai'],
   placement: ['view_dashboard', 'view_ranking', 'review_drama', 'export_data', 'manage_play_count'],
   production: ['view_dashboard', 'view_ranking'],
   screenwriter: ['view_dashboard', 'view_ranking'],
