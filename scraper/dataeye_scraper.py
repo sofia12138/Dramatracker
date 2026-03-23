@@ -16,12 +16,19 @@ import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import urllib.parse
+
 import requests
 
 try:
     from langdetect import detect
 except ImportError:
     detect = None
+
+# ---------------------------------------------------------------------------
+# sign 盐值（从 DataEye 前端 JS 逆向获得）
+# ---------------------------------------------------------------------------
+SIGN_SALT = "g:%w0k7&q1v9^tRnLz!M"
 
 # ---------------------------------------------------------------------------
 # 路径
@@ -112,21 +119,39 @@ def load_cookie() -> str:
     return cookie
 
 
-def make_sign() -> tuple[str, str]:
-    this_times = str(int(time.time() * 1000))
-    sign = hashlib.md5(this_times.encode()).hexdigest().upper()
-    debug(f"生成签名: thisTimes={this_times}, sign={sign}")
-    return this_times, sign
+def compute_sign(params: dict) -> str:
+    """按 DataEye 前端 computeSignByParams 算法生成签名。
+    1. 将参数 key 按字母排序
+    2. 拼接为 key=value& 格式（sign 字段排除）
+    3. 末尾追加 &key=<SIGN_SALT>
+    4. MD5 后转大写
+    """
+    filtered = {k: v for k, v in params.items() if k != "sign"}
+    parts = []
+    for k in sorted(filtered.keys()):
+        v = filtered[k]
+        if isinstance(v, str):
+            v = urllib.parse.unquote(urllib.parse.quote(v.strip(), safe=""))
+        if v is None:
+            v = ""
+        parts.append(f"{k}={v}")
+    raw = "&".join(parts) + f"&key={SIGN_SALT}"
+    sign = hashlib.md5(raw.encode()).hexdigest().upper()
+    debug(f"compute_sign: raw={raw[:80]}... -> {sign}")
+    return sign
 
 
 def build_headers(cookie: str) -> dict:
-    debug("构建请求头 (Content-Type, Cookie, User-Agent...)")
+    today_str = datetime.now().strftime("%m/%d/%Y")
+    s_value = hashlib.md5(today_str.encode()).hexdigest().upper()
+    debug(f"构建请求头 (S={s_value[:8]}...)")
     return {
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
         "Content-Language": "zh-cn",
         "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
         "Cookie": cookie,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "S": s_value,
     }
 
 
@@ -148,15 +173,15 @@ def check_response(data: dict, cookie: str) -> bool:
 
 
 def fetch_ranking(cookie: str, product_id: int, headers: dict) -> list[dict]:
-    this_times, sign = make_sign()
+    this_times = str(int(time.time() * 1000))
     payload = {
         "pageId": 1,
         "pageSize": 20,
         "dimDate": 7,
         "productId": product_id,
         "thisTimes": this_times,
-        "sign": sign,
     }
+    payload["sign"] = compute_sign(payload)
     debug(f"[API] 发送榜单请求 -> {URL_LIST}")
     debug(f"  参数: productId={product_id}, pageSize=20, dimDate=7")
     resp = requests.post(URL_LIST, data=payload, headers=headers, timeout=30)
@@ -170,12 +195,12 @@ def fetch_ranking(cookie: str, product_id: int, headers: dict) -> list[dict]:
 
 
 def fetch_detail(cookie: str, playlet_id: str, headers: dict) -> dict | None:
-    this_times, sign = make_sign()
+    this_times = str(int(time.time() * 1000))
     payload = {
         "playletId": playlet_id,
         "thisTimes": this_times,
-        "sign": sign,
     }
+    payload["sign"] = compute_sign(payload)
     debug(f"[API] 发送详情请求 -> {URL_DETAIL}")
     debug(f"  参数: playletId={playlet_id}")
     resp = requests.post(URL_DETAIL, data=payload, headers=headers, timeout=30)
@@ -192,15 +217,15 @@ def fetch_detail(cookie: str, playlet_id: str, headers: dict) -> dict | None:
 
 
 def fetch_trend(cookie: str, playlet_id: str, start_date: str, end_date: str, headers: dict) -> list[dict]:
-    this_times, sign = make_sign()
+    this_times = str(int(time.time() * 1000))
     payload = {
         "startDate": start_date,
         "endDate": end_date,
         "playletId": playlet_id,
         "isUnifiedPlaylet": "false",
         "thisTimes": this_times,
-        "sign": sign,
     }
+    payload["sign"] = compute_sign(payload)
     debug(f"[API] 发送趋势请求 -> {URL_TREND}")
     debug(f"  参数: playletId={playlet_id}, {start_date} ~ {end_date}")
     resp = requests.post(URL_TREND, data=payload, headers=headers, timeout=30)

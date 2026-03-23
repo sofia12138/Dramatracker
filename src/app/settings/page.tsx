@@ -149,31 +149,54 @@ export default function SettingsPage() {
   };
 
   // --- Manual Fetch ---
-  const handleManualFetch = async () => {
+  const handleManualFetch = async (backfill = 0) => {
     setFetching(true);
-    setFetchLogs(['[' + new Date().toLocaleTimeString() + '] 开始抓取...']);
+    setFetchLogs([`[${new Date().toLocaleTimeString()}] 启动 Python 抓取脚本...${backfill > 0 ? ` (补抓${backfill}天)` : ''}`]);
 
     const addLog = (msg: string) => {
-      setFetchLogs(prev => [...prev, '[' + new Date().toLocaleTimeString() + '] ' + msg]);
+      setFetchLogs(prev => [...prev, msg]);
       setTimeout(() => logRef.current?.scrollTo(0, logRef.current.scrollHeight), 50);
     };
 
     try {
-      addLog('正在启动 Python 抓取脚本...');
-      addLog('脚本路径: scraper/dataeye_scraper.py');
-      addLog('');
-      addLog('⚠️ 手动抓取需要在终端中执行：');
-      addLog('  cd dramatracker');
-      addLog('  python scraper/dataeye_scraper.py');
-      addLog('');
-      addLog('补抓过去N天：');
-      addLog('  python scraper/dataeye_scraper.py --backfill 7');
-      addLog('');
-      addLog('请确保已安装依赖：pip install requests langdetect');
-      await new Promise(r => setTimeout(r, 500));
-      addLog('抓取提示结束');
-    } catch {
-      addLog('❌ 抓取失败');
+      const res = await fetch('/api/scraper/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backfill }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        addLog(`❌ 启动失败: ${data.error || res.statusText}`);
+        setFetching(false);
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) { addLog('❌ 无法读取响应流'); setFetching(false); return; }
+
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        for (const line of text.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.text) addLog(data.text.replace(/\n$/, ''));
+            if (data.done) {
+              addLog(data.exitCode === 0 ? '✅ 抓取完成' : `⚠️ 脚本退出码: ${data.exitCode}`);
+              if (data.exitCode === 0) {
+                fetchAll();
+                showToast('数据抓取完成');
+              }
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch (err) {
+      addLog(`❌ 抓取失败: ${err instanceof Error ? err.message : String(err)}`);
     }
     setFetching(false);
   };
@@ -394,27 +417,38 @@ export default function SettingsPage() {
       <div className="card space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-primary-text">手动抓取</h2>
-          <button
-            onClick={handleManualFetch}
-            disabled={fetching}
-            className="px-4 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-2"
-          >
-            {fetching && (
-              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            )}
-            {fetching ? '抓取中...' : '立即抓取'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleManualFetch(7)}
+              disabled={fetching}
+              className="px-3 py-2 border border-primary-border text-primary-text-secondary rounded-lg text-xs font-medium hover:bg-primary-card transition-colors disabled:opacity-50"
+            >
+              补抓7天
+            </button>
+            <button
+              onClick={() => handleManualFetch(0)}
+              disabled={fetching}
+              className="px-4 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-2"
+            >
+              {fetching && (
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              )}
+              {fetching ? '抓取中...' : '立即抓取'}
+            </button>
+          </div>
         </div>
 
         {fetchLogs.length > 0 && (
           <div
             ref={logRef}
-            className="bg-[#1a1a2e] rounded-lg p-4 max-h-48 overflow-y-auto font-mono text-xs leading-relaxed"
+            className="bg-[#1a1a2e] rounded-lg p-4 max-h-64 overflow-y-auto font-mono text-xs leading-relaxed"
           >
-            {fetchLogs.map((log, i) => (
-              <div key={i} className="text-green-400">{log}</div>
+            {fetchLogs.map((l, i) => (
+              <div key={i} className={l.includes('❌') || l.includes('STDERR') ? 'text-red-400' : l.includes('✅') ? 'text-green-400' : l.includes('⚠️') ? 'text-yellow-400' : 'text-green-400'}>
+                {l}
+              </div>
             ))}
             {fetching && <div className="text-green-400 animate-pulse">▊</div>}
           </div>
