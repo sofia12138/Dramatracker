@@ -159,11 +159,19 @@ export default function SettingsPage() {
     };
 
     try {
-      addLog('正在连接 DataEye API...');
-      await new Promise(r => setTimeout(r, 1000));
-      addLog('提示：Python 抓取脚本尚未配置');
-      addLog('请在项目根目录下创建 scripts/fetch_data.py');
-      addLog('抓取任务结束');
+      addLog('正在启动 Python 抓取脚本...');
+      addLog('脚本路径: scraper/dataeye_scraper.py');
+      addLog('');
+      addLog('⚠️ 手动抓取需要在终端中执行：');
+      addLog('  cd dramatracker');
+      addLog('  python scraper/dataeye_scraper.py');
+      addLog('');
+      addLog('补抓过去N天：');
+      addLog('  python scraper/dataeye_scraper.py --backfill 7');
+      addLog('');
+      addLog('请确保已安装依赖：pip install requests langdetect');
+      await new Promise(r => setTimeout(r, 500));
+      addLog('抓取提示结束');
     } catch {
       addLog('❌ 抓取失败');
     }

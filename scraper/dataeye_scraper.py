@@ -79,7 +79,13 @@ stats = {
 
 def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}")
+    print(f"[{ts}] {msg}", flush=True)
+
+
+def debug(msg: str):
+    """调试级别日志，前缀 [DEBUG]"""
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    print(f"[{ts}] [DEBUG] {msg}", flush=True)
 
 
 def log_error(msg: str):
@@ -92,6 +98,7 @@ def log_error(msg: str):
 # Cookie & Sign
 # ---------------------------------------------------------------------------
 def load_cookie() -> str:
+    debug(f"正在读取配置文件: {CONFIG_PATH}")
     if not CONFIG_PATH.exists():
         log("❌ config.json 不存在，请先在设置页面配置 Cookie")
         sys.exit(1)
@@ -101,16 +108,19 @@ def load_cookie() -> str:
     if not cookie:
         log("❌ Cookie 未配置，请先在设置页面配置")
         sys.exit(1)
+    debug(f"Cookie 已加载, 长度={len(cookie)}, 前30字符: {cookie[:30]}...")
     return cookie
 
 
 def make_sign() -> tuple[str, str]:
     this_times = str(int(time.time() * 1000))
     sign = hashlib.md5(this_times.encode()).hexdigest().upper()
+    debug(f"生成签名: thisTimes={this_times}, sign={sign}")
     return this_times, sign
 
 
 def build_headers(cookie: str) -> dict:
+    debug("构建请求头 (Content-Type, Cookie, User-Agent...)")
     return {
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
         "Content-Language": "zh-cn",
@@ -127,10 +137,12 @@ def check_response(data: dict, cookie: str) -> bool:
     """检查响应状态，Cookie 失效时终止"""
     code = data.get("statusCode")
     msg = data.get("msg", "")
+    debug(f"响应校验: statusCode={code}, msg={msg}")
     if code != 200 or msg != "success":
         if code == 401 or "token" in msg.lower() or "login" in msg.lower():
             log("❌ Cookie 已失效，请更新")
             sys.exit(1)
+        log(f"⚠️ 响应异常: statusCode={code}, msg={msg}")
         return False
     return True
 
@@ -145,11 +157,16 @@ def fetch_ranking(cookie: str, product_id: int, headers: dict) -> list[dict]:
         "thisTimes": this_times,
         "sign": sign,
     }
+    debug(f"[API] 发送榜单请求 -> {URL_LIST}")
+    debug(f"  参数: productId={product_id}, pageSize=20, dimDate=7")
     resp = requests.post(URL_LIST, data=payload, headers=headers, timeout=30)
+    debug(f"  收到响应: HTTP {resp.status_code}, 长度={len(resp.text)}")
     data = resp.json()
     if not check_response(data, cookie):
         return []
-    return data.get("data", {}).get("list", [])
+    items = data.get("data", {}).get("list", [])
+    debug(f"  解析结果: 获取到 {len(items)} 条榜单数据")
+    return items
 
 
 def fetch_detail(cookie: str, playlet_id: str, headers: dict) -> dict | None:
@@ -159,11 +176,19 @@ def fetch_detail(cookie: str, playlet_id: str, headers: dict) -> dict | None:
         "thisTimes": this_times,
         "sign": sign,
     }
+    debug(f"[API] 发送详情请求 -> {URL_DETAIL}")
+    debug(f"  参数: playletId={playlet_id}")
     resp = requests.post(URL_DETAIL, data=payload, headers=headers, timeout=30)
+    debug(f"  收到响应: HTTP {resp.status_code}, 长度={len(resp.text)}")
     data = resp.json()
     if not check_response(data, cookie):
         return None
-    return data.get("data")
+    detail = data.get("data")
+    if detail:
+        debug(f"  剧名: {detail.get('playletName', '?')}, 热力值: {detail.get('consumeNum', '?')}")
+    else:
+        debug("  详情数据为空")
+    return detail
 
 
 def fetch_trend(cookie: str, playlet_id: str, start_date: str, end_date: str, headers: dict) -> list[dict]:
@@ -176,11 +201,16 @@ def fetch_trend(cookie: str, playlet_id: str, start_date: str, end_date: str, he
         "thisTimes": this_times,
         "sign": sign,
     }
+    debug(f"[API] 发送趋势请求 -> {URL_TREND}")
+    debug(f"  参数: playletId={playlet_id}, {start_date} ~ {end_date}")
     resp = requests.post(URL_TREND, data=payload, headers=headers, timeout=30)
+    debug(f"  收到响应: HTTP {resp.status_code}, 长度={len(resp.text)}")
     data = resp.json()
     if not check_response(data, cookie):
         return []
-    return data.get("data", [])
+    trend_list = data.get("data", [])
+    debug(f"  解析结果: 获取到 {len(trend_list)} 条趋势数据")
+    return trend_list
 
 
 # ---------------------------------------------------------------------------
@@ -188,11 +218,15 @@ def fetch_trend(cookie: str, playlet_id: str, start_date: str, end_date: str, he
 # ---------------------------------------------------------------------------
 def detect_language(text: str) -> str:
     if not text or not detect:
+        debug(f"语种识别跳过: text={'空' if not text else '有'}, langdetect={'已安装' if detect else '未安装'}")
         return "Unknown"
     try:
         code = detect(text)
-        return LANG_MAP.get(code, "Unknown")
-    except Exception:
+        result = LANG_MAP.get(code, "Unknown")
+        debug(f"语种识别: code={code} -> {result}")
+        return result
+    except Exception as e:
+        debug(f"语种识别异常: {e}")
         return "Unknown"
 
 
@@ -201,9 +235,11 @@ def detect_language(text: str) -> str:
 # ---------------------------------------------------------------------------
 def get_db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    debug(f"连接数据库: {DB_PATH}")
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    debug("数据库连接成功")
     return conn
 
 
@@ -217,6 +253,8 @@ def upsert_drama(conn: sqlite3.Connection, info: dict, language: str):
     tags_raw = info.get("playletTags", [])
     tags = json.dumps(tags_raw if isinstance(tags_raw, list) else [], ensure_ascii=False)
 
+    debug(f"[DB] upsert_drama: playlet_id={playlet_id}, title={title[:20]}")
+
     existing = conn.execute(
         "SELECT id FROM drama WHERE playlet_id = ?", (playlet_id,)
     ).fetchone()
@@ -228,6 +266,7 @@ def upsert_drama(conn: sqlite3.Connection, info: dict, language: str):
             (title, description, cover_url, first_air_date, language, tags, creative_count, playlet_id),
         )
         stats["updated"] += 1
+        debug(f"  -> UPDATE 已有记录 (id={existing[0]})")
     else:
         conn.execute(
             "INSERT INTO drama (playlet_id, title, description, language, cover_url, "
@@ -235,6 +274,7 @@ def upsert_drama(conn: sqlite3.Connection, info: dict, language: str):
             (playlet_id, title, description, language, cover_url, first_air_date, tags, creative_count),
         )
         stats["new_drama"] += 1
+        debug(f"  -> INSERT 新剧集")
 
 
 def upsert_ranking(conn: sqlite3.Connection, playlet_id: str, platform: str,
@@ -281,11 +321,13 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
     platform_name = platform["name"]
     product_ids = platform["productIds"]
     log(f"📡 正在抓取 {platform_name} (productIds: {product_ids})")
+    debug(f"scrape_platform() 开始执行: platform={platform_name}, date={snapshot_date}")
 
     # Step 1: 获取榜单 — 多个 productId 合并去重
     all_items: dict[str, dict] = {}
     for pid in product_ids:
         try:
+            debug(f"Step1: 请求榜单 productId={pid}")
             items = fetch_ranking(cookie, pid, headers)
             for item in items:
                 playlet_id = str(item.get("playletId", ""))
@@ -294,6 +336,8 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
                 ranking = item.get("ranking", 999)
                 if playlet_id not in all_items or ranking < all_items[playlet_id].get("ranking", 999):
                     all_items[playlet_id] = item
+            debug(f"Step1: productId={pid} 完成, 当前去重后共 {len(all_items)} 部")
+            log(f"  ⏳ 等待2秒...")
             time.sleep(2)
         except Exception as e:
             log(f"  ⚠️ {platform_name} productId={pid} 榜单请求失败: {e}")
@@ -303,15 +347,20 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
     log(f"  📋 {platform_name} 获取到 {len(all_items)} 部剧")
 
     # Step 2 & 3: 逐剧获取详情和趋势
-    for playlet_id, item in all_items.items():
+    total = len(all_items)
+    for idx, (playlet_id, item) in enumerate(all_items.items(), 1):
         try:
             ranking = item.get("ranking", 0)
             consume_num = item.get("consumeNum", 0)
             material_cnt = item.get("materialCnt", 0)
             release_day = item.get("releaseDay", 0)
 
+            debug(f"Step2: [{idx}/{total}] 处理 playletId={playlet_id}, 排名={ranking}")
+
             # 获取详情
+            debug(f"Step2: 获取剧集详情...")
             detail = fetch_detail(cookie, playlet_id, headers)
+            log(f"  ⏳ 等待2秒...")
             time.sleep(2)
 
             if detail:
@@ -328,18 +377,26 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
                 if first_seen:
                     try:
                         today_str = datetime.now().strftime("%Y-%m-%d")
+                        debug(f"Step3: 获取趋势数据 {first_seen} ~ {today_str}")
                         trend_data = fetch_trend(cookie, playlet_id, first_seen, today_str, headers)
+                        inserted_count = 0
                         for t in trend_data:
                             stat_date = t.get("statDate", "")
                             num = t.get("num", 0)
                             if stat_date:
                                 insert_trend(conn, playlet_id, platform_name, stat_date, num)
+                                inserted_count += 1
+                        debug(f"  趋势数据写入 {inserted_count} 条")
+                        log(f"  ⏳ 等待2秒...")
                         time.sleep(2)
                     except Exception as e:
+                        debug(f"  趋势获取异常: {e}")
                         log_error(f"{platform_name} {playlet_id} trend: {e}")
+                else:
+                    debug("  没有 firstSeen，跳过趋势抓取")
             else:
                 language = "Unknown"
-                # 最少保证 drama 表有记录
+                debug("  详情获取失败，尝试最小化插入 drama 表")
                 existing = conn.execute(
                     "SELECT id FROM drama WHERE playlet_id = ?", (playlet_id,)
                 ).fetchone()
@@ -350,29 +407,39 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
                         (playlet_id, title),
                     )
                     stats["new_drama"] += 1
+                    debug(f"  -> INSERT 最小记录: {title}")
 
             # 写入排名快照
+            debug(f"[DB] upsert_ranking: {playlet_id} @ {platform_name}, rank={ranking}")
             upsert_ranking(
                 conn, playlet_id, platform_name, ranking,
                 consume_num, material_cnt, release_day, snapshot_date,
             )
             stats["success"] += 1
 
-            log(f"  ✅ #{ranking} {item.get('playletName', playlet_id)[:20]} "
+            log(f"  ✅ [{idx}/{total}] #{ranking} {item.get('playletName', playlet_id)[:20]} "
                 f"热力={consume_num} 素材={material_cnt} 天={release_day}")
 
         except Exception as e:
             stats["fail"] += 1
-            log(f"  ❌ {playlet_id} 处理失败: {e}")
+            log(f"  ❌ [{idx}/{total}] {playlet_id} 处理失败: {e}")
             log_error(f"{platform_name} {playlet_id}: {traceback.format_exc()}")
 
+    debug(f"{platform_name} commit 数据库")
     conn.commit()
+    log(f"  🏁 {platform_name} 完成")
 
 
 def run(backfill_days: int = 0):
     log("=" * 60)
     log("DramaTracker DataEye 数据抓取")
     log("=" * 60)
+    debug(f"脚本启动: Python {sys.version}")
+    debug(f"工作目录: {os.getcwd()}")
+    debug(f"BASE_DIR: {BASE_DIR}")
+    debug(f"DB_PATH: {DB_PATH}")
+    debug(f"CONFIG_PATH: {CONFIG_PATH}")
+    debug(f"langdetect 可用: {detect is not None}")
 
     cookie = load_cookie()
     headers = build_headers(cookie)
@@ -387,13 +454,17 @@ def run(backfill_days: int = 0):
     else:
         dates = [datetime.now().strftime("%Y-%m-%d")]
 
-    for date_str in dates:
+    debug(f"待抓取日期: {dates}")
+    debug(f"平台数量: {len(PLATFORMS)}")
+
+    for date_idx, date_str in enumerate(dates, 1):
         log(f"\n{'─' * 40}")
-        log(f"📅 抓取日期: {date_str}")
+        log(f"📅 抓取日期: {date_str} ({date_idx}/{len(dates)})")
         log(f"{'─' * 40}")
 
-        for platform in PLATFORMS:
+        for plat_idx, platform in enumerate(PLATFORMS, 1):
             try:
+                log(f"\n--- 平台 [{plat_idx}/{len(PLATFORMS)}] ---")
                 scrape_platform(cookie, headers, conn, platform, date_str)
             except SystemExit:
                 raise
@@ -401,6 +472,7 @@ def run(backfill_days: int = 0):
                 log(f"❌ 平台 {platform['name']} 整体失败: {e}")
                 log_error(f"platform {platform['name']}: {traceback.format_exc()}")
 
+    debug("关闭数据库连接")
     conn.close()
 
     # 汇总
@@ -412,13 +484,17 @@ def run(backfill_days: int = 0):
     log(f"  🆕 新增剧集: {stats['new_drama']} 部")
     log(f"  🔄 更新剧集: {stats['updated']} 部")
     log(f"{'=' * 60}")
+    debug("脚本执行结束")
 
 
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    print(f"[启动] dataeye_scraper.py 被调用, __name__={__name__}", flush=True)
+    print(f"[启动] 命令行参数: {sys.argv}", flush=True)
     parser = argparse.ArgumentParser(description="DataEye 海外短剧数据抓取")
     parser.add_argument("--backfill", type=int, default=0, help="补抓过去N天数据")
     args = parser.parse_args()
+    print(f"[启动] 解析参数: backfill={args.backfill}", flush=True)
     run(backfill_days=args.backfill)
