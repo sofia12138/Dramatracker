@@ -20,8 +20,25 @@ export async function POST(request: NextRequest) {
 
   const readable = new ReadableStream({
     start(controller) {
+      let closed = false;
+      const encoder = new TextEncoder();
+
       const send = (text: string) => {
-        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ text })}\n\n`));
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`));
+        } catch {
+          closed = true;
+        }
+      };
+
+      const finish = (exitCode: number) => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, exitCode })}\n\n`));
+          controller.close();
+        } catch { /* already closed */ }
       };
 
       let pythonCmd = 'python';
@@ -38,15 +55,13 @@ export async function POST(request: NextRequest) {
       });
 
       child.stdout.on('data', (data: Buffer) => {
-        const lines = data.toString('utf-8').split('\n');
-        for (const line of lines) {
+        for (const line of data.toString('utf-8').split('\n')) {
           if (line.trim()) send(line + '\n');
         }
       });
 
       child.stderr.on('data', (data: Buffer) => {
-        const lines = data.toString('utf-8').split('\n');
-        for (const line of lines) {
+        for (const line of data.toString('utf-8').split('\n')) {
           if (line.trim()) send(`[STDERR] ${line}\n`);
         }
       });
@@ -54,14 +69,12 @@ export async function POST(request: NextRequest) {
       child.on('error', (err) => {
         send(`[错误] 无法启动 Python: ${err.message}\n`);
         send(`[提示] 请确保 Python 已安装并在 PATH 中\n`);
-        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ done: true, exitCode: -1 })}\n\n`));
-        controller.close();
+        finish(-1);
       });
 
       child.on('close', (code) => {
         send(`\n[系统] 脚本执行完毕，退出码: ${code}\n`);
-        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ done: true, exitCode: code })}\n\n`));
-        controller.close();
+        finish(code ?? 1);
       });
     },
   });
