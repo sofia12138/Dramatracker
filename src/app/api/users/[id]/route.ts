@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import bcrypt from 'bcryptjs';
+import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 
 export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
+  const auth = checkPermission(request, 'manage_users');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     const body = await request.json();
@@ -23,7 +27,31 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   }
 }
 
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  const auth = checkPermission(request, 'manage_users');
+  if (isErrorResponse(auth)) return auth;
+
+  try {
+    const db = getDb();
+    const body = await request.json();
+
+    if (body.password) {
+      const hashedPassword = bcrypt.hashSync(body.password, 10);
+      db.prepare("UPDATE users SET password=?, updated_at=datetime('now') WHERE id=?")
+        .run(hashedPassword, params.id);
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  const auth = checkPermission(request, 'manage_users');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     db.prepare('DELETE FROM users WHERE id = ?').run(params.id);

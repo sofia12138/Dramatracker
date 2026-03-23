@@ -1,10 +1,14 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const auth = checkPermission(request, 'manage_settings');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     let config = { ai_api_key: '', ai_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', ai_model: 'qwen3.5-plus' };
     try {

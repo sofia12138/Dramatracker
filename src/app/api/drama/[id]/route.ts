@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 
 export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
+  const auth = checkPermission(request, 'manage_data');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     const body = await request.json();
@@ -20,6 +24,9 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  const auth = checkPermission(request, 'review_drama');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     const body = await request.json();
@@ -48,6 +55,9 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  const auth = checkPermission(request, 'manage_data');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     db.prepare('DELETE FROM drama WHERE id = ?').run(params.id);

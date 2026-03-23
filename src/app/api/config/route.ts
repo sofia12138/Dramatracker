@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
 
@@ -40,7 +41,10 @@ function writeConfig(config: AppConfig) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = checkPermission(request, 'manage_settings');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const config = readConfig();
     return NextResponse.json({
@@ -57,6 +61,9 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  const auth = checkPermission(request, 'manage_settings');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const body = await request.json();
     const config = readConfig();

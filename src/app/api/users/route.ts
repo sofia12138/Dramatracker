@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import bcrypt from 'bcryptjs';
+import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = checkPermission(request, 'manage_users');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     const users = db.prepare('SELECT id, username, name, role, is_active, created_at, updated_at, last_login_at FROM users ORDER BY id ASC').all();
@@ -14,6 +18,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = checkPermission(request, 'manage_users');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     const body = await request.json();

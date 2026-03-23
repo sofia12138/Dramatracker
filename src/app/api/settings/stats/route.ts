@@ -1,7 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = checkPermission(request, 'manage_settings');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     const totalDramas = (db.prepare('SELECT COUNT(*) as c FROM drama').get() as { c: number }).c;
@@ -24,7 +28,10 @@ export async function GET() {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(request: NextRequest) {
+  const auth = checkPermission(request, 'manage_settings');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     db.exec('DELETE FROM ranking_snapshot');

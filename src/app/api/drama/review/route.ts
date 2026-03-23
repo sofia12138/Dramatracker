@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 
 export async function GET(request: NextRequest) {
+  const auth = checkPermission(request, 'review_drama');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     const { searchParams } = new URL(request.url);
@@ -11,7 +15,6 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * pageSize;
 
     if (platform) {
-      // Filter by platform: only dramas that have ranking on this platform
       const countSql = `
         SELECT COUNT(DISTINCT d.id) as total
         FROM drama d
@@ -36,7 +39,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ data, total: countResult.total, page, pageSize });
     }
 
-    // All platforms
     const countResult = db.prepare('SELECT COUNT(*) as total FROM drama WHERE is_ai_drama IS NULL').get() as { total: number };
 
     const dataSql = `
@@ -65,6 +67,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = checkPermission(request, 'review_drama');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     const body = await request.json();

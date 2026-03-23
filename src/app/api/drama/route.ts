@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 
 export async function GET(request: NextRequest) {
   try {
@@ -42,6 +43,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = checkPermission(request, 'manage_data');
+  if (isErrorResponse(auth)) return auth;
+
   try {
     const db = getDb();
     const body = await request.json();
