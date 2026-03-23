@@ -84,15 +84,22 @@ stats = {
 }
 
 
+def _safe_print(text: str):
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:
+        print(text.encode("utf-8", errors="replace").decode("utf-8", errors="replace"), flush=True)
+
+
 def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+    _safe_print(f"[{ts}] {msg}")
 
 
 def debug(msg: str):
     """调试级别日志，前缀 [DEBUG]"""
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"[{ts}] [DEBUG] {msg}", flush=True)
+    _safe_print(f"[{ts}] [DEBUG] {msg}")
 
 
 def log_error(msg: str):
@@ -189,8 +196,16 @@ def fetch_ranking(cookie: str, product_id: int, headers: dict) -> list[dict]:
     data = resp.json()
     if not check_response(data, cookie):
         return []
-    items = data.get("data", {}).get("list", [])
+    content = data.get("content", data.get("data", {}))
+    if isinstance(content, dict):
+        items = content.get("list", [])
+    elif isinstance(content, list):
+        items = content
+    else:
+        items = []
     debug(f"  解析结果: 获取到 {len(items)} 条榜单数据")
+    if items:
+        debug(f"  首条keys: {list(items[0].keys()) if isinstance(items[0], dict) else 'N/A'}")
     return items
 
 
@@ -208,12 +223,15 @@ def fetch_detail(cookie: str, playlet_id: str, headers: dict) -> dict | None:
     data = resp.json()
     if not check_response(data, cookie):
         return None
-    detail = data.get("data")
-    if detail:
+    detail = data.get("content", data.get("data"))
+    if isinstance(detail, list) and len(detail) > 0:
+        detail = detail[0]
+    if detail and isinstance(detail, dict):
         debug(f"  剧名: {detail.get('playletName', '?')}, 热力值: {detail.get('consumeNum', '?')}")
+        debug(f"  详情keys: {list(detail.keys())}")
     else:
-        debug("  详情数据为空")
-    return detail
+        debug(f"  详情数据为空, 响应keys: {list(data.keys())}")
+    return detail if isinstance(detail, dict) else None
 
 
 def fetch_trend(cookie: str, playlet_id: str, start_date: str, end_date: str, headers: dict) -> list[dict]:
@@ -233,7 +251,8 @@ def fetch_trend(cookie: str, playlet_id: str, start_date: str, end_date: str, he
     data = resp.json()
     if not check_response(data, cookie):
         return []
-    trend_list = data.get("data", [])
+    trend_data = data.get("content", data.get("data", []))
+    trend_list = trend_data if isinstance(trend_data, list) else []
     debug(f"  解析结果: 获取到 {len(trend_list)} 条趋势数据")
     return trend_list
 
@@ -261,8 +280,9 @@ def detect_language(text: str) -> str:
 def get_db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     debug(f"连接数据库: {DB_PATH}")
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA foreign_keys=ON")
     debug("数据库连接成功")
     return conn
