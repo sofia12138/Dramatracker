@@ -23,6 +23,11 @@ interface DetailData {
   latestRanks: { platform: string; rank: number; heat_value: number }[];
 }
 
+interface PlayCountPoint {
+  record_week: string;
+  total: number;
+}
+
 interface Props {
   playletId: string | null;
   onClose: () => void;
@@ -39,9 +44,11 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [editingDesc, setEditingDesc] = useState(false);
   const [descText, setDescText] = useState('');
+  const [playCountData, setPlayCountData] = useState<PlayCountPoint[]>([]);
   const investChartRef = useRef<HTMLDivElement>(null);
   const heatChartRef = useRef<HTMLDivElement>(null);
   const rankChartRef = useRef<HTMLDivElement>(null);
+  const playCountChartRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!playletId) return;
@@ -54,6 +61,11 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
         setLoading(false);
       })
       .catch(() => setLoading(false));
+
+    fetch(`/api/play-count?mode=chart&playlet_id=${playletId}`)
+      .then(r => r.json())
+      .then(d => setPlayCountData(Array.isArray(d) ? d : []))
+      .catch(() => setPlayCountData([]));
   }, [playletId]);
 
   useEffect(() => {
@@ -62,10 +74,11 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
       renderInvestChart();
       renderHeatChart();
       renderRankChart();
+      renderPlayCountChart();
     }, 100);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, loading]);
+  }, [data, loading, playCountData]);
 
   const renderInvestChart = () => {
     if (!investChartRef.current || !data?.investTrend?.length) return;
@@ -160,6 +173,32 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
       }],
     });
 
+    const resize = () => chart.resize();
+    window.addEventListener('resize', resize);
+    return () => { window.removeEventListener('resize', resize); chart.dispose(); };
+  };
+
+  const renderPlayCountChart = () => {
+    if (!playCountChartRef.current || !playCountData.length) return;
+    const chart = echarts.init(playCountChartRef.current);
+    chart.setOption({
+      tooltip: { trigger: 'axis', valueFormatter: (v: number) => v.toLocaleString() },
+      grid: { left: 60, right: 20, top: 20, bottom: 30 },
+      xAxis: {
+        type: 'category',
+        data: playCountData.map(p => p.record_week),
+        axisLabel: { fontSize: 10 },
+      },
+      yAxis: { type: 'value', axisLabel: { fontSize: 10 } },
+      series: [{
+        type: 'line', smooth: true,
+        data: playCountData.map(p => p.total),
+        areaStyle: { opacity: 0.15, color: '#3b5bdb' },
+        lineStyle: { color: '#3b5bdb', width: 2 },
+        itemStyle: { color: '#3b5bdb' },
+        symbol: 'circle', symbolSize: 6,
+      }],
+    });
     const resize = () => chart.resize();
     window.addEventListener('resize', resize);
     return () => { window.removeEventListener('resize', resize); chart.dispose(); };
@@ -310,6 +349,18 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
                 ) : (
                   <div className="h-32 flex items-center justify-center text-sm text-primary-text-muted border border-primary-border rounded-lg">
                     暂无排名数据
+                  </div>
+                )}
+              </div>
+
+              {/* Play Count Chart */}
+              <div>
+                <h3 className="text-sm font-semibold text-primary-text mb-3">播放数据（近8周）</h3>
+                {playCountData.length > 0 ? (
+                  <div ref={playCountChartRef} className="w-full h-52 border border-primary-border rounded-lg" />
+                ) : (
+                  <div className="h-32 flex items-center justify-center text-sm text-primary-text-muted border border-primary-border rounded-lg">
+                    暂无播放量数据
                   </div>
                 )}
               </div>

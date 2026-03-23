@@ -88,7 +88,8 @@ function initDb(db: Database.Database) {
       record_date TEXT NOT NULL,
       input_by TEXT,
       note TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(playlet_id, platform, record_week)
     );
 
     CREATE INDEX IF NOT EXISTS idx_ranking_snapshot_date ON ranking_snapshot(snapshot_date);
