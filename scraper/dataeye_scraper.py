@@ -73,6 +73,32 @@ LANG_MAP = {
     "nl": "Dutch", "hi": "Hindi",
 }
 
+COUNTRY_LANG_MAP = {
+    "美国": "English", "加拿大": "English", "英国": "English", "澳大利亚": "English",
+    "巴西": "Portuguese", "葡萄牙": "Portuguese",
+    "墨西哥": "Spanish", "西班牙": "Spanish", "阿根廷": "Spanish", "哥伦比亚": "Spanish", "智利": "Spanish", "秘鲁": "Spanish",
+    "法国": "French",
+    "德国": "German", "奥地利": "German",
+    "印度尼西亚": "Indonesian", "印尼": "Indonesian",
+    "越南": "Vietnamese",
+    "韩国": "Korean",
+    "日本": "Japanese",
+    "俄罗斯": "Russian",
+    "阿联酋": "Arabic", "沙特阿拉伯": "Arabic", "埃及": "Arabic",
+    "泰国": "Thai",
+    "土耳其": "Turkish",
+    "意大利": "Italian",
+    "印度": "Hindi",
+    "中国": "Chinese", "台湾": "Chinese", "香港": "Chinese",
+    "荷兰": "Dutch",
+    "波兰": "Polish",
+    "菲律宾": "English",
+    "马来西亚": "English",
+    "新加坡": "English",
+    "尼日利亚": "English",
+    "南非": "English",
+}
+
 # ---------------------------------------------------------------------------
 # 统计计数器
 # ---------------------------------------------------------------------------
@@ -260,18 +286,34 @@ def fetch_trend(cookie: str, playlet_id: str, start_date: str, end_date: str, he
 # ---------------------------------------------------------------------------
 # 语种识别
 # ---------------------------------------------------------------------------
-def detect_language(text: str) -> str:
-    if not text or not detect:
+def detect_language(text: str, country_list: list | None = None) -> str:
+    if text and detect:
+        try:
+            code = detect(text)
+            result = LANG_MAP.get(code, "")
+            if result:
+                debug(f"语种识别: code={code} -> {result}")
+                return result
+            debug(f"语种识别: code={code} 未在映射表中")
+        except Exception as e:
+            debug(f"语种识别异常: {e}")
+    else:
         debug(f"语种识别跳过: text={'空' if not text else '有'}, langdetect={'已安装' if detect else '未安装'}")
-        return "Unknown"
-    try:
-        code = detect(text)
-        result = LANG_MAP.get(code, "Unknown")
-        debug(f"语种识别: code={code} -> {result}")
-        return result
-    except Exception as e:
-        debug(f"语种识别异常: {e}")
-        return "Unknown"
+
+    if country_list:
+        from collections import Counter
+        lang_counts: Counter[str] = Counter()
+        for c in country_list:
+            name = c.get("countryName", "") if isinstance(c, dict) else str(c)
+            lang = COUNTRY_LANG_MAP.get(name, "")
+            if lang:
+                lang_counts[lang] += 1
+        if lang_counts:
+            best = lang_counts.most_common(1)[0][0]
+            debug(f"语种由投放国家推断: {best} (国家数={len(country_list)})")
+            return best
+
+    return "Unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +452,8 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
 
             if detail:
                 description = detail.get("playletbrief", "")
-                language = detect_language(description)
+                country_list = detail.get("countryList", [])
+                language = detect_language(description, country_list)
                 upsert_drama(conn, detail, language)
 
                 consume_num = detail.get("consumeNum", consume_num)
