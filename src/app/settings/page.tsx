@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 interface Platform {
   id: number;
@@ -10,175 +10,607 @@ interface Platform {
   created_at: string;
 }
 
-export default function SettingsPage() {
-  const [platforms, setPlatforms] = useState<Platform[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingPlatform, setEditingPlatform] = useState<Platform | null>(null);
-  const [form, setForm] = useState({ name: '', product_ids: '', is_active: 1 });
+interface Config {
+  cookie: string;
+  cookie_updated_at: string;
+  cookie_status: string;
+  auto_fetch_enabled: boolean;
+  auto_fetch_time: string;
+  ai_api_key: string;
+  ai_model: string;
+  ai_base_url: string;
+}
 
-  const fetchPlatforms = useCallback(() => {
-    setLoading(true);
-    fetch('/api/platforms')
-      .then(r => r.json())
-      .then(data => { setPlatforms(data); setLoading(false); })
-      .catch(() => setLoading(false));
+interface Stats {
+  totalDramas: number;
+  totalSnapshots: number;
+  pendingReview: number;
+  aiRealCount: number;
+  aiMangaCount: number;
+  realCount: number;
+  totalInvestTrend: number;
+  totalPlayCount: number;
+}
+
+interface Toast {
+  id: number;
+  message: string;
+  type: string;
+}
+
+function parseProductIds(ids: string): number[] {
+  try { return JSON.parse(ids); } catch { return []; }
+}
+
+export default function SettingsPage() {
+  const [config, setConfig] = useState<Config | null>(null);
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Cookie
+  const [cookieText, setCookieText] = useState('');
+  const [savingCookie, setSavingCookie] = useState(false);
+
+  // Auto fetch
+  const [autoFetchEnabled, setAutoFetchEnabled] = useState(false);
+  const [autoFetchTime, setAutoFetchTime] = useState('09:00');
+
+  // Manual fetch
+  const [fetching, setFetching] = useState(false);
+  const [fetchLogs, setFetchLogs] = useState<string[]>([]);
+  const logRef = useRef<HTMLDivElement>(null);
+
+  // AI config
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [testingAi, setTestingAi] = useState(false);
+  const [aiStatus, setAiStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  // Platform form
+  const [showPlatformForm, setShowPlatformForm] = useState(false);
+  const [editingPlatform, setEditingPlatform] = useState<Platform | null>(null);
+  const [platformForm, setPlatformForm] = useState({ name: '', android_id: '', ios_id: '' });
+
+  // Delete confirm
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  // Toast
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastId = useRef(0);
+
+  const showToast = useCallback((message: string, type = 'success') => {
+    const id = ++toastId.current;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   }, []);
 
-  useEffect(() => { fetchPlatforms(); }, [fetchPlatforms]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
     try {
-      let productIds: number[] = [];
-      try {
-        productIds = JSON.parse(form.product_ids);
-      } catch {
-        productIds = form.product_ids.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-      }
+      const [configRes, platformsRes, statsRes] = await Promise.all([
+        fetch('/api/config').then(r => r.json()),
+        fetch('/api/platforms').then(r => r.json()),
+        fetch('/api/settings/stats').then(r => r.json()),
+      ]);
+      setConfig(configRes);
+      setCookieText(configRes.cookie || '');
+      setAutoFetchEnabled(configRes.auto_fetch_enabled || false);
+      setAutoFetchTime(configRes.auto_fetch_time || '09:00');
+      setPlatforms(platformsRes);
+      setStats(statsRes);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, []);
 
-      const body = { name: form.name, product_ids: productIds, is_active: form.is_active };
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
-      if (editingPlatform) {
-        await fetch(`/api/platforms/${editingPlatform.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-      } else {
-        await fetch('/api/platforms', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-      }
-      setShowForm(false);
-      setEditingPlatform(null);
-      setForm({ name: '', product_ids: '', is_active: 1 });
-      fetchPlatforms();
-    } catch (error) {
-      console.error('Submit failed:', error);
-    }
+  // --- Cookie ---
+  const handleSaveCookie = async () => {
+    setSavingCookie(true);
+    try {
+      await fetch('/api/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookie: cookieText }),
+      });
+      showToast('Cookie 已保存');
+      const res = await fetch('/api/config').then(r => r.json());
+      setConfig(res);
+    } catch { showToast('保存失败', 'error'); }
+    setSavingCookie(false);
   };
 
-  const handleEdit = (platform: Platform) => {
-    setEditingPlatform(platform);
-    setForm({
-      name: platform.name,
-      product_ids: platform.product_ids,
-      is_active: platform.is_active,
+  // --- Auto Fetch ---
+  const handleAutoFetchChange = async (enabled: boolean) => {
+    setAutoFetchEnabled(enabled);
+    await fetch('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_fetch_enabled: enabled }),
     });
-    setShowForm(true);
+    showToast(enabled ? '已启用自动抓取' : '已关闭自动抓取');
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('确定要删除此平台吗？')) return;
+  const handleAutoFetchTimeChange = async (time: string) => {
+    setAutoFetchTime(time);
+    await fetch('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_fetch_time: time }),
+    });
+  };
+
+  // --- Manual Fetch ---
+  const handleManualFetch = async () => {
+    setFetching(true);
+    setFetchLogs(['[' + new Date().toLocaleTimeString() + '] 开始抓取...']);
+
+    const addLog = (msg: string) => {
+      setFetchLogs(prev => [...prev, '[' + new Date().toLocaleTimeString() + '] ' + msg]);
+      setTimeout(() => logRef.current?.scrollTo(0, logRef.current.scrollHeight), 50);
+    };
+
+    try {
+      addLog('正在连接 DataEye API...');
+      await new Promise(r => setTimeout(r, 1000));
+      addLog('提示：Python 抓取脚本尚未配置');
+      addLog('请在项目根目录下创建 scripts/fetch_data.py');
+      addLog('抓取任务结束');
+    } catch {
+      addLog('❌ 抓取失败');
+    }
+    setFetching(false);
+  };
+
+  // --- AI Config ---
+  const handleSaveAiKey = async () => {
+    await fetch('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ai_api_key: aiApiKey }),
+    });
+    showToast('API Key 已保存');
+    setAiApiKey('');
+    const res = await fetch('/api/config').then(r => r.json());
+    setConfig(res);
+  };
+
+  const handleTestAi = async () => {
+    setTestingAi(true);
+    setAiStatus(null);
+    try {
+      const res = await fetch('/api/config/test-ai', { method: 'POST' });
+      const data = await res.json();
+      setAiStatus({ ok: data.success, msg: data.message });
+    } catch {
+      setAiStatus({ ok: false, msg: '请求失败' });
+    }
+    setTestingAi(false);
+  };
+
+  // --- Platform ---
+  const handlePlatformSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const productIds: number[] = [];
+    if (platformForm.android_id) {
+      platformForm.android_id.split(',').forEach(s => {
+        const n = parseInt(s.trim());
+        if (!isNaN(n)) productIds.push(n);
+      });
+    }
+    if (platformForm.ios_id) {
+      platformForm.ios_id.split(',').forEach(s => {
+        const n = parseInt(s.trim());
+        if (!isNaN(n)) productIds.push(n);
+      });
+    }
+
+    const body = { name: platformForm.name, product_ids: productIds, is_active: 1 };
+
+    if (editingPlatform) {
+      await fetch(`/api/platforms/${editingPlatform.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      showToast('平台已更新');
+    } else {
+      await fetch('/api/platforms', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      showToast('平台已添加');
+    }
+    setShowPlatformForm(false);
+    setEditingPlatform(null);
+    setPlatformForm({ name: '', android_id: '', ios_id: '' });
+    const res = await fetch('/api/platforms').then(r => r.json());
+    setPlatforms(res);
+  };
+
+  const handleTogglePlatform = async (platform: Platform) => {
+    const newActive = platform.is_active ? 0 : 1;
+    await fetch(`/api/platforms/${platform.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: platform.name, product_ids: parseProductIds(platform.product_ids), is_active: newActive }),
+    });
+    showToast(newActive ? `${platform.name} 已启用` : `${platform.name} 已停用`);
+    const res = await fetch('/api/platforms').then(r => r.json());
+    setPlatforms(res);
+  };
+
+  const handleDeletePlatform = async (id: number) => {
     await fetch(`/api/platforms/${id}`, { method: 'DELETE' });
-    fetchPlatforms();
+    showToast('平台已删除');
+    setConfirmDelete(null);
+    const res = await fetch('/api/platforms').then(r => r.json());
+    setPlatforms(res);
   };
 
-  const parseProductIds = (ids: string) => {
-    try { return JSON.parse(ids); } catch { return []; }
+  const handleEditPlatform = (p: Platform) => {
+    const ids = parseProductIds(p.product_ids);
+    setEditingPlatform(p);
+    setPlatformForm({ name: p.name, android_id: ids.join(', '), ios_id: '' });
+    setShowPlatformForm(true);
   };
+
+  // --- Clear Data ---
+  const handleClearData = async () => {
+    await fetch('/api/settings/stats', { method: 'DELETE' });
+    showToast('历史数据已清空');
+    setConfirmClear(false);
+    const res = await fetch('/api/settings/stats').then(r => r.json());
+    setStats(res);
+  };
+
+  // --- Next run time ---
+  const getNextRunTime = () => {
+    if (!autoFetchEnabled) return '未启用';
+    const now = new Date();
+    const [h, m] = autoFetchTime.split(':').map(Number);
+    const target = new Date(now);
+    target.setHours(h, m, 0, 0);
+    if (target <= now) target.setDate(target.getDate() + 1);
+    return target.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-accent" />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-primary-text">设置</h1>
+    <div className="space-y-6">
+      {/* Toast */}
+      <div className="fixed top-4 right-4 z-50 space-y-2">
+        {toasts.map(toast => (
+          <div key={toast.id} className={`px-4 py-3 rounded-lg shadow-lg text-sm font-medium animate-slide-in flex items-center gap-2 ${
+            toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-[#3b5bdb] text-white'
+          }`}>
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            {toast.message}
+          </div>
+        ))}
       </div>
 
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-primary-text">平台管理</h2>
+      <h1 className="text-xl font-bold text-primary-text">设置</h1>
+
+      {/* ====== 1. Cookie 配置 ====== */}
+      <div className="card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-primary-text">Cookie 配置</h2>
+          <div className="flex items-center gap-2">
+            {config?.cookie ? (
+              <span className="flex items-center gap-1 text-xs text-green-600">
+                <span>✅</span> 有效
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-xs text-red-500">
+                <span>❌</span> 未配置
+              </span>
+            )}
+          </div>
+        </div>
+
+        <textarea
+          value={cookieText}
+          onChange={e => setCookieText(e.target.value)}
+          placeholder="请粘贴 DataEye 的 Cookie 字符串..."
+          rows={4}
+          className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-xs font-mono focus:outline-none focus:border-primary-accent resize-none"
+        />
+
+        <div className="flex items-center justify-between">
           <button
-            onClick={() => { setShowForm(!showForm); setEditingPlatform(null); setForm({ name: '', product_ids: '', is_active: 1 }); }}
-            className="px-4 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
+            onClick={handleSaveCookie}
+            disabled={savingCookie}
+            className="px-4 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
           >
-            {showForm ? '取消' : '+ 新增平台'}
+            {savingCookie ? '保存中...' : '保存 Cookie'}
+          </button>
+          {config?.cookie_updated_at && (
+            <span className="text-xs text-primary-text-muted">
+              最后更新：{new Date(config.cookie_updated_at).toLocaleString('zh-CN')}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ====== 2. 自动抓取配置 ====== */}
+      <div className="card space-y-4">
+        <h2 className="text-base font-semibold text-primary-text">自动抓取配置</h2>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-primary-text">启用每日自动抓取</p>
+            <p className="text-xs text-primary-text-muted mt-0.5">每天定时从 DataEye 拉取最新榜单数据</p>
+          </div>
+          <button
+            onClick={() => handleAutoFetchChange(!autoFetchEnabled)}
+            className={`relative w-11 h-6 rounded-full transition-colors ${autoFetchEnabled ? 'bg-primary-accent' : 'bg-gray-300'}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${autoFetchEnabled ? 'translate-x-5' : ''}`} />
           </button>
         </div>
 
-        {showForm && (
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 p-4 bg-primary-bg rounded-lg border border-primary-border">
-            <div>
-              <label className="block text-sm text-primary-text-secondary mb-1">平台名称 *</label>
-              <input type="text" required value={form.name}
-                onChange={e => setForm({ ...form, name: e.target.value })}
-                className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent" />
-            </div>
-            <div>
-              <label className="block text-sm text-primary-text-secondary mb-1">Product IDs (逗号分隔)</label>
-              <input type="text" value={form.product_ids}
-                onChange={e => setForm({ ...form, product_ids: e.target.value })}
-                placeholder="例: 365084, 365123"
-                className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent" />
-            </div>
-            <div className="flex items-end gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={form.is_active === 1}
-                  onChange={e => setForm({ ...form, is_active: e.target.checked ? 1 : 0 })}
-                  className="w-4 h-4 text-primary-accent rounded" />
-                <span className="text-sm text-primary-text-secondary">启用</span>
-              </label>
-              <button type="submit"
-                className="px-6 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity">
-                {editingPlatform ? '更新' : '创建'}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {loading ? (
-          <div className="flex items-center justify-center h-32">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-accent"></div>
+        <div className="flex items-center gap-4">
+          <div>
+            <label className="block text-xs text-primary-text-secondary mb-1">每天执行时间</label>
+            <input
+              type="time"
+              value={autoFetchTime}
+              onChange={e => handleAutoFetchTimeChange(e.target.value)}
+              disabled={!autoFetchEnabled}
+              className="px-3 py-1.5 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent disabled:opacity-50"
+            />
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-primary-border">
-                  <th className="text-left py-3 px-4 font-medium text-primary-text-secondary">ID</th>
-                  <th className="text-left py-3 px-4 font-medium text-primary-text-secondary">平台名称</th>
-                  <th className="text-left py-3 px-4 font-medium text-primary-text-secondary">Product IDs</th>
-                  <th className="text-left py-3 px-4 font-medium text-primary-text-secondary">状态</th>
-                  <th className="text-left py-3 px-4 font-medium text-primary-text-secondary">创建时间</th>
-                  <th className="text-left py-3 px-4 font-medium text-primary-text-secondary">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {platforms.map(platform => (
-                  <tr key={platform.id} className="border-b border-primary-border/50 hover:bg-primary-accent-bg/30 transition-colors">
-                    <td className="py-3 px-4 text-primary-text-muted">{platform.id}</td>
-                    <td className="py-3 px-4 text-primary-text font-medium">{platform.name}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap gap-1">
-                        {parseProductIds(platform.product_ids).map((pid: number) => (
-                          <span key={pid} className="px-2 py-0.5 bg-primary-accent-bg text-primary-accent text-xs rounded border border-primary-accent-border">
-                            {pid}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className={`inline-flex items-center gap-1 text-xs ${platform.is_active ? 'text-green-600' : 'text-red-500'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${platform.is_active ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                        {platform.is_active ? '启用' : '禁用'}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-primary-text-muted text-xs">{platform.created_at}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => handleEdit(platform)} className="text-primary-accent hover:underline text-xs">编辑</button>
-                        <button onClick={() => handleDelete(platform.id)} className="text-red-500 hover:underline text-xs">删除</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div>
+            <label className="block text-xs text-primary-text-secondary mb-1">下次执行</label>
+            <p className="text-sm text-primary-text">{getNextRunTime()}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* ====== 3. 手动抓取 ====== */}
+      <div className="card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-primary-text">手动抓取</h2>
+          <button
+            onClick={handleManualFetch}
+            disabled={fetching}
+            className="px-4 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-2"
+          >
+            {fetching && (
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            )}
+            {fetching ? '抓取中...' : '立即抓取'}
+          </button>
+        </div>
+
+        {fetchLogs.length > 0 && (
+          <div
+            ref={logRef}
+            className="bg-[#1a1a2e] rounded-lg p-4 max-h-48 overflow-y-auto font-mono text-xs leading-relaxed"
+          >
+            {fetchLogs.map((log, i) => (
+              <div key={i} className="text-green-400">{log}</div>
+            ))}
+            {fetching && <div className="text-green-400 animate-pulse">▊</div>}
           </div>
         )}
       </div>
+
+      {/* ====== 4. 平台管理 ====== */}
+      <div className="card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-primary-text">平台管理</h2>
+          <button
+            onClick={() => {
+              setShowPlatformForm(!showPlatformForm);
+              setEditingPlatform(null);
+              setPlatformForm({ name: '', android_id: '', ios_id: '' });
+            }}
+            className="px-3 py-1.5 bg-primary-accent text-white rounded-lg text-xs font-medium hover:opacity-90 transition-opacity"
+          >
+            {showPlatformForm ? '取消' : '+ 添加平台'}
+          </button>
+        </div>
+
+        {showPlatformForm && (
+          <form onSubmit={handlePlatformSubmit} className="p-4 bg-primary-bg rounded-lg border border-primary-border space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs text-primary-text-secondary mb-1">平台名称 *</label>
+                <input type="text" required value={platformForm.name}
+                  onChange={e => setPlatformForm({ ...platformForm, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent" />
+              </div>
+              <div>
+                <label className="block text-xs text-primary-text-secondary mb-1">Android Product ID（选填，逗号分隔）</label>
+                <input type="text" value={platformForm.android_id}
+                  onChange={e => setPlatformForm({ ...platformForm, android_id: e.target.value })}
+                  placeholder="如 365084, 365123"
+                  className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent" />
+              </div>
+              <div>
+                <label className="block text-xs text-primary-text-secondary mb-1">iOS Product ID（选填，逗号分隔）</label>
+                <input type="text" value={platformForm.ios_id}
+                  onChange={e => setPlatformForm({ ...platformForm, ios_id: e.target.value })}
+                  placeholder="如 365099"
+                  className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent" />
+              </div>
+            </div>
+            <button type="submit"
+              className="px-5 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90">
+              {editingPlatform ? '更新' : '添加'}
+            </button>
+          </form>
+        )}
+
+        <div className="divide-y divide-primary-border/50">
+          {platforms.map(p => {
+            const pids = parseProductIds(p.product_ids);
+            return (
+              <div key={p.id} className="flex items-center gap-4 py-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-sm text-primary-text">{p.name}</span>
+                    {!p.is_active && (
+                      <span className="px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500 rounded">已停用</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {pids.map(pid => (
+                      <span key={pid} className="px-1.5 py-0.5 text-[10px] rounded bg-primary-accent-bg text-primary-accent border border-primary-accent-border">
+                        {pid}
+                      </span>
+                    ))}
+                    {pids.length === 0 && <span className="text-[10px] text-primary-text-muted">未配置 Product ID</span>}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleTogglePlatform(p)}
+                  className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${p.is_active ? 'bg-primary-accent' : 'bg-gray-300'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${p.is_active ? 'translate-x-4' : ''}`} />
+                </button>
+
+                <button onClick={() => handleEditPlatform(p)}
+                  className="text-xs text-primary-accent hover:underline shrink-0">编辑</button>
+
+                {confirmDelete === p.id ? (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => handleDeletePlatform(p.id)}
+                      className="px-2 py-1 text-[10px] bg-red-500 text-white rounded hover:bg-red-600">确认</button>
+                    <button onClick={() => setConfirmDelete(null)}
+                      className="px-2 py-1 text-[10px] bg-gray-200 text-gray-600 rounded hover:bg-gray-300">取消</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setConfirmDelete(p.id)}
+                    className="text-xs text-red-500 hover:underline shrink-0">删除</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ====== 5. AI 配置 ====== */}
+      <div className="card space-y-4">
+        <h2 className="text-base font-semibold text-primary-text">AI 配置</h2>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-primary-text-secondary mb-1">百炼 API Key</label>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={aiApiKey}
+                onChange={e => setAiApiKey(e.target.value)}
+                placeholder={config?.ai_api_key ? `当前: ${config.ai_api_key}` : '请输入 API Key'}
+                className="flex-1 px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent"
+              />
+              <button onClick={handleSaveAiKey} disabled={!aiApiKey}
+                className="px-4 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50">
+                保存
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-4">
+              <div>
+                <label className="block text-xs text-primary-text-secondary mb-1">模型</label>
+                <p className="text-sm text-primary-text font-mono">qwen3.5-plus</p>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-primary-text-secondary mb-1">Base URL</label>
+              <p className="text-xs text-primary-text-muted font-mono break-all">
+                https://dashscope.aliyuncs.com/compatible-mode/v1
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleTestAi}
+            disabled={testingAi}
+            className="px-4 py-2 border border-primary-border rounded-lg text-sm text-primary-text-secondary hover:bg-primary-card disabled:opacity-50 flex items-center gap-2"
+          >
+            {testingAi && <div className="w-3 h-3 border-2 border-primary-accent border-t-transparent rounded-full animate-spin" />}
+            {testingAi ? '测试中...' : '测试连接'}
+          </button>
+          {aiStatus && (
+            <span className={`text-sm flex items-center gap-1 ${aiStatus.ok ? 'text-green-600' : 'text-red-500'}`}>
+              {aiStatus.ok ? '✅' : '❌'} {aiStatus.msg}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ====== 6. 数据统计 ====== */}
+      <div className="card space-y-4">
+        <h2 className="text-base font-semibold text-primary-text">数据统计</h2>
+
+        {stats && (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatCard label="剧集总数" value={stats.totalDramas} color="text-primary-accent" />
+              <StatCard label="快照记录" value={stats.totalSnapshots} color="text-indigo-600" />
+              <StatCard label="待审核" value={stats.pendingReview} color="text-orange-500" />
+              <StatCard label="投放趋势" value={stats.totalInvestTrend} color="text-teal-600" />
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <StatCard label="AI真人剧" value={stats.aiRealCount} color="text-blue-600" />
+              <StatCard label="AI漫剧" value={stats.aiMangaCount} color="text-purple-600" />
+              <StatCard label="真人剧" value={stats.realCount} color="text-green-600" />
+            </div>
+          </>
+        )}
+
+        <div className="pt-2 border-t border-primary-border">
+          {confirmClear ? (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-red-500 font-medium">确认清空所有历史数据？此操作不可撤销。</span>
+              <button onClick={handleClearData}
+                className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600">
+                确认清空
+              </button>
+              <button onClick={() => setConfirmClear(false)}
+                className="px-4 py-2 bg-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-300">
+                取消
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setConfirmClear(true)}
+              className="px-4 py-2 bg-red-50 text-red-500 border border-red-200 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors">
+              清空历史数据
+            </button>
+          )}
+          <p className="text-xs text-primary-text-muted mt-2">
+            将清空所有榜单快照、投放趋势和播放量记录，剧集信息和平台配置将保留。
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div className="bg-white rounded-lg border border-primary-border p-3 text-center">
+      <p className={`text-2xl font-bold ${color}`}>{value.toLocaleString()}</p>
+      <p className="text-xs text-primary-text-muted mt-1">{label}</p>
     </div>
   );
 }
