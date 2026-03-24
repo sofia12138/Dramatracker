@@ -265,17 +265,18 @@ export default function RankingTable({ type, title }: Props) {
                 <tr>
                   <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-16">排名</th>
                   <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-14">变化</th>
-                  <th className="text-left py-3 px-3 font-medium text-primary-text-secondary min-w-[240px]">剧集</th>
+                  <th className="text-left py-3 px-3 font-medium text-primary-text-secondary min-w-[260px]">剧集</th>
                   <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-20">类型</th>
-                  <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-20">标签</th>
+                  <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-20">题材</th>
                   <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-20">语种</th>
                   {isOverall && <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-32">平台</th>}
-                  <th className="text-left py-3 px-2 font-medium text-primary-text-secondary w-20">上线</th>
-                  <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-16">投放</th>
+                  <th className="text-left py-3 px-2 font-medium text-primary-text-secondary w-20">上线日期</th>
+                  <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20 whitespace-nowrap">投放时长</th>
                   <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">
                     {isOverall ? '热力增量' : '累计热力值'}
                   </th>
-                  <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20">趋势</th>
+                  <th className="text-right py-3 px-2 font-medium text-primary-text-secondary w-20">播放量</th>
+                  <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20">投放趋势</th>
                   <th className="text-center py-3 px-3 font-medium text-primary-text-secondary w-16">操作</th>
                 </tr>
               </thead>
@@ -311,7 +312,7 @@ export default function RankingTable({ type, title }: Props) {
 
                       {/* Cover + Title */}
                       <td className="py-3 px-3">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-4">
                           <div className="w-10 h-14 rounded overflow-hidden bg-primary-sidebar shrink-0 border border-primary-border/50">
                             {item.cover_url ? (
                               <img src={item.cover_url} alt="" className="w-full h-full object-cover" />
@@ -319,14 +320,9 @@ export default function RankingTable({ type, title }: Props) {
                               <div className="w-full h-full flex items-center justify-center text-xs text-primary-text-muted">N/A</div>
                             )}
                           </div>
-                          <div className="min-w-0">
-                            <p className="font-medium text-primary-text truncate max-w-[180px]">
-                              {item.title || item.playlet_id}
-                            </p>
-                            <p className="text-xs text-primary-text-muted truncate max-w-[180px] mt-0.5">
-                              {item.description || `ID: ${item.playlet_id}`}
-                            </p>
-                          </div>
+                          <p className="min-w-0 max-w-[200px] font-medium text-primary-text line-clamp-2 break-words leading-5">
+                            {item.title || item.playlet_id}
+                          </p>
                         </div>
                       </td>
 
@@ -345,14 +341,14 @@ export default function RankingTable({ type, title }: Props) {
 
                       {/* Tags */}
                       <td className="py-3 px-3">
-                        <div className="flex flex-wrap gap-1">
+                        <div className="flex items-center gap-1 flex-nowrap">
                           {tags.slice(0, 2).map((tag: string, i: number) => (
-                            <span key={i} className="px-1.5 py-0.5 text-[11px] rounded bg-orange-50 text-orange-600 border border-orange-200">
+                            <span key={i} className="px-1.5 py-0.5 text-[11px] rounded bg-orange-50 text-orange-600 border border-orange-200 whitespace-nowrap">
                               {tag}
                             </span>
                           ))}
                           {tags.length > 2 && (
-                            <span className="text-[11px] text-primary-text-muted">+{tags.length - 2}</span>
+                            <span className="text-[11px] text-primary-text-muted whitespace-nowrap">+{tags.length - 2}</span>
                           )}
                         </div>
                       </td>
@@ -411,6 +407,11 @@ export default function RankingTable({ type, title }: Props) {
                             {formatHeat(item.heat_value || 0)}
                           </span>
                         )}
+                      </td>
+
+                      {/* Play Count */}
+                      <td className="py-3 px-2 text-right">
+                        <span className="text-xs text-primary-text-muted">-</span>
                       </td>
 
                       {/* Sparkline */}
