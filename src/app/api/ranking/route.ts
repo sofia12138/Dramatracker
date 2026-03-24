@@ -24,10 +24,10 @@ export async function GET(request: NextRequest) {
       dateFilter = 'rs.snapshot_date = ?';
       params.push(latestDate);
     } else if (mode === '7days') {
-      dateFilter = 'rs.snapshot_date >= date(?, "-6 days") AND rs.snapshot_date <= ?';
+      dateFilter = "rs.snapshot_date >= date(?, '-6 days') AND rs.snapshot_date <= ?";
       params.push(latestDate, latestDate);
     } else if (mode === '30days') {
-      dateFilter = 'rs.snapshot_date >= date(?, "-29 days") AND rs.snapshot_date <= ?';
+      dateFilter = "rs.snapshot_date >= date(?, '-29 days') AND rs.snapshot_date <= ?";
       params.push(latestDate, latestDate);
     } else if (mode === 'custom' && startDate && endDate) {
       dateFilter = 'rs.snapshot_date >= ? AND rs.snapshot_date <= ?';
@@ -200,14 +200,14 @@ function getPreviousPeriodRanks(
     prevDateFilter = 'rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < ?)';
     params.push(latestDate);
   } else if (mode === '7days') {
-    prevDateFilter = 'rs.snapshot_date >= date(?, "-13 days") AND rs.snapshot_date < date(?, "-6 days")';
+    prevDateFilter = "rs.snapshot_date >= date(?, '-13 days') AND rs.snapshot_date < date(?, '-6 days')";
     params.push(latestDate, latestDate);
   } else if (mode === '30days') {
-    prevDateFilter = 'rs.snapshot_date >= date(?, "-59 days") AND rs.snapshot_date < date(?, "-29 days")';
+    prevDateFilter = "rs.snapshot_date >= date(?, '-59 days') AND rs.snapshot_date < date(?, '-29 days')";
     params.push(latestDate, latestDate);
   } else if (mode === 'custom' && startDate && endDate) {
     const days = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000);
-    prevDateFilter = `rs.snapshot_date >= date(?, "-${days} days") AND rs.snapshot_date < ?`;
+    prevDateFilter = `rs.snapshot_date >= date(?, '-${days} days') AND rs.snapshot_date < ?`;
     params.push(startDate, startDate);
   } else {
     return map;
@@ -256,14 +256,14 @@ function getPreviousHeatValues(
     prevDateFilter = 'rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < ?)';
     params.push(latestDate);
   } else if (mode === '7days') {
-    prevDateFilter = 'rs.snapshot_date >= date(?, "-13 days") AND rs.snapshot_date < date(?, "-6 days")';
+    prevDateFilter = "rs.snapshot_date >= date(?, '-13 days') AND rs.snapshot_date < date(?, '-6 days')";
     params.push(latestDate, latestDate);
   } else if (mode === '30days') {
-    prevDateFilter = 'rs.snapshot_date >= date(?, "-59 days") AND rs.snapshot_date < date(?, "-29 days")';
+    prevDateFilter = "rs.snapshot_date >= date(?, '-59 days') AND rs.snapshot_date < date(?, '-29 days')";
     params.push(latestDate, latestDate);
   } else if (mode === 'custom' && startDate && endDate) {
     const days = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000);
-    prevDateFilter = `rs.snapshot_date >= date(?, "-${days} days") AND rs.snapshot_date < ?`;
+    prevDateFilter = `rs.snapshot_date >= date(?, '-${days} days') AND rs.snapshot_date < ?`;
     params.push(startDate, startDate);
   } else {
     return map;

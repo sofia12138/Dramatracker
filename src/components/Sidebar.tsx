@@ -134,11 +134,13 @@ export default function Sidebar() {
 
   return (
     <aside className="w-60 bg-primary-sidebar h-screen flex flex-col border-r border-primary-border shrink-0">
-      <div className="p-5 border-b border-primary-border">
-        <h1 className="text-lg font-bold text-primary-text tracking-wide">
-          DramaTracker
-        </h1>
-        <p className="text-xs text-primary-text-muted mt-1">海外短剧榜单监控</p>
+      <div className="px-5 py-4 border-b border-primary-border">
+        <div className="flex items-center gap-2.5">
+          <svg className="w-5 h-5 text-primary-accent shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+          </svg>
+          <span className="text-[17px] font-semibold text-primary-text">DramaTracker</span>
+        </div>
       </div>
 
       <nav className="flex-1 py-4 overflow-y-auto">
