@@ -81,8 +81,9 @@ export async function GET(request: NextRequest) {
         };
       });
 
-      // Get sparkline data
-      const sparklines = getSparklineData(db, enriched.map(i => i.playlet_id), platform, latestDate);
+      const sparklines = getInvestTrendSparklines(
+        db, enriched.map(i => ({ playlet_id: i.playlet_id, platform }))
+      );
 
       const result = enriched.map(item => ({
         ...item,
@@ -151,8 +152,11 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => b.heatIncrement - a.heatIncrement)
       .slice(0, limit);
 
-    // Assign new rankings
     const prevRankMap = getPreviousPeriodOverallRanks(db, isAiDrama, mode, latestDate, startDate, endDate);
+
+    const sparklines = getInvestTrendSparklines(
+      db, sorted.map(e => ({ playlet_id: e.item.playlet_id as string, platform: e.bestPlatform }))
+    );
 
     const result = sorted.map((entry, index) => {
       const newRank = index + 1;
@@ -168,7 +172,7 @@ export async function GET(request: NextRequest) {
         heat_increment: entry.heatIncrement,
         platforms_list: entry.platforms,
         best_platform: entry.bestPlatform,
-        sparkline: [],
+        sparkline: sparklines.get(pid) || [],
       };
     });
 
@@ -309,34 +313,52 @@ function getPreviousPeriodOverallRanks(
   return rankMap;
 }
 
-function getSparklineData(
+function getInvestTrendSparklines(
   db: ReturnType<typeof getDb>,
-  playletIds: string[],
-  platform: string,
-  latestDate: string
+  entries: Array<{ playlet_id: string; platform: string }>,
 ) {
   const map = new Map<string, number[]>();
-  if (playletIds.length === 0) return map;
+  if (entries.length === 0) return map;
 
-  const placeholders = playletIds.map(() => '?').join(',');
-  const sql = `
-    SELECT playlet_id, snapshot_date, heat_value
-    FROM ranking_snapshot
-    WHERE playlet_id IN (${placeholders})
-      AND platform = ?
-      AND snapshot_date >= date(?, '-6 days')
-      AND snapshot_date <= ?
-    ORDER BY snapshot_date ASC
-  `;
+  const byPlatform = new Map<string, string[]>();
+  for (const e of entries) {
+    if (!byPlatform.has(e.platform)) byPlatform.set(e.platform, []);
+    const arr = byPlatform.get(e.platform)!;
+    if (!arr.includes(e.playlet_id)) arr.push(e.playlet_id);
+  }
 
   try {
-    const rows = db.prepare(sql).all(...playletIds, platform, latestDate, latestDate) as {
-      playlet_id: string; snapshot_date: string; heat_value: number;
-    }[];
+    const platforms = Array.from(byPlatform.keys());
+    for (let pi = 0; pi < platforms.length; pi++) {
+      const platform = platforms[pi];
+      const pids = byPlatform.get(platform)!;
+      const placeholders = pids.map(() => '?').join(',');
+      const sql = `
+        SELECT playlet_id, date, daily_invest_count
+        FROM invest_trend
+        WHERE playlet_id IN (${placeholders}) AND platform = ?
+        ORDER BY date ASC
+      `;
 
-    for (const row of rows) {
-      if (!map.has(row.playlet_id)) map.set(row.playlet_id, []);
-      map.get(row.playlet_id)!.push(row.heat_value);
+      const rows = db.prepare(sql).all(...pids, platform) as {
+        playlet_id: string; date: string; daily_invest_count: number;
+      }[];
+
+      const grouped = new Map<string, number[]>();
+      for (const row of rows) {
+        if (!grouped.has(row.playlet_id)) grouped.set(row.playlet_id, []);
+        grouped.get(row.playlet_id)!.push(row.daily_invest_count);
+      }
+
+      const groupedKeys = Array.from(grouped.keys());
+      for (let gi = 0; gi < groupedKeys.length; gi++) {
+        const pid = groupedKeys[gi];
+        const values = grouped.get(pid)!;
+        const startIdx = values.findIndex(v => v > 0);
+        if (startIdx === -1) continue;
+        const filtered = values.slice(startIdx);
+        map.set(pid, filtered.slice(-14));
+      }
     }
   } catch { /* empty */ }
   return map;

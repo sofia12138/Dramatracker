@@ -275,7 +275,7 @@ export default function RankingTable({ type, title }: Props) {
                   <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">
                     {isOverall ? '热力增量' : '累计热力值'}
                   </th>
-                  {!isOverall && <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20">趋势</th>}
+                  <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20">趋势</th>
                   <th className="text-center py-3 px-3 font-medium text-primary-text-secondary w-16">操作</th>
                 </tr>
               </thead>
@@ -413,14 +413,12 @@ export default function RankingTable({ type, title }: Props) {
                         )}
                       </td>
 
-                      {/* Sparkline (platform only) */}
-                      {!isOverall && (
-                        <td className="py-3 px-2">
-                          <div className="flex justify-center">
-                            <Sparkline data={item.sparkline || []} />
-                          </div>
-                        </td>
-                      )}
+                      {/* Sparkline */}
+                      <td className="py-3 px-2">
+                        <div className="flex justify-center">
+                          <Sparkline data={item.sparkline || []} />
+                        </div>
+                      </td>
 
                       {/* Detail Button */}
                       <td className="py-3 px-3 text-center">
