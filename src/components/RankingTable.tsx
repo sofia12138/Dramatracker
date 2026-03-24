@@ -46,12 +46,12 @@ const TIME_MODES = [
 ];
 
 const LANG_COLORS: Record<string, string> = {
-  English: 'bg-blue-50 text-blue-600 border-blue-200',
-  Spanish: 'bg-amber-50 text-amber-600 border-amber-200',
-  Portuguese: 'bg-green-50 text-green-600 border-green-200',
-  French: 'bg-indigo-50 text-indigo-600 border-indigo-200',
-  Indonesian: 'bg-rose-50 text-rose-600 border-rose-200',
-  German: 'bg-gray-50 text-gray-600 border-gray-200',
+  English: 'bg-primary-accent-bg text-primary-accent border-primary-accent-border',
+  Spanish: 'bg-primary-accent-bg text-primary-accent border-primary-accent-border',
+  Portuguese: 'bg-primary-accent-bg text-primary-accent border-primary-accent-border',
+  French: 'bg-primary-accent-bg text-primary-accent border-primary-accent-border',
+  Indonesian: 'bg-primary-accent-bg text-primary-accent border-primary-accent-border',
+  German: 'bg-primary-accent-bg text-primary-accent border-primary-accent-border',
 };
 
 function formatHeat(val: number): string {
@@ -235,7 +235,7 @@ export default function RankingTable({ type, title }: Props) {
               onClick={() => setSelectedPlatform(p)}
               className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-all border ${
                 active
-                  ? 'bg-[#eef2ff] text-[#3b5bdb] border-[#c5d0fa] shadow-sm'
+                  ? 'bg-primary-accent-bg text-primary-accent border-primary-accent-border shadow-sm'
                   : 'bg-primary-card text-primary-text-secondary border-transparent hover:bg-primary-sidebar hover:text-primary-text'
               }`}
             >
@@ -294,7 +294,7 @@ export default function RankingTable({ type, title }: Props) {
                           {isOverall && item.rank <= 3 ? (
                             <MedalIcon rank={item.rank} />
                           ) : (
-                            <span className={`text-lg font-bold ${item.rank <= 3 ? 'text-[#3b5bdb]' : 'text-primary-text'}`}>
+                            <span className={`text-lg font-bold ${item.rank <= 3 ? 'text-primary-accent' : 'text-primary-text'}`}>
                               {item.rank}
                             </span>
                           )}
@@ -312,7 +312,7 @@ export default function RankingTable({ type, title }: Props) {
                       {/* Cover + Title */}
                       <td className="py-3 px-3">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-14 rounded overflow-hidden bg-gray-100 shrink-0 border border-primary-border/50">
+                          <div className="w-10 h-14 rounded overflow-hidden bg-primary-sidebar shrink-0 border border-primary-border/50">
                             {item.cover_url ? (
                               <img src={item.cover_url} alt="" className="w-full h-full object-cover" />
                             ) : (
@@ -360,7 +360,7 @@ export default function RankingTable({ type, title }: Props) {
                       {/* Language */}
                       <td className="py-3 px-3">
                         {item.language ? (
-                          <span className={`px-2 py-0.5 text-[11px] rounded-full border ${LANG_COLORS[item.language] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                          <span className={`px-2 py-0.5 text-[11px] rounded-full border ${LANG_COLORS[item.language] || 'bg-primary-accent-bg text-primary-accent border-primary-accent-border'}`}>
                             {item.language}
                           </span>
                         ) : (
@@ -402,12 +402,12 @@ export default function RankingTable({ type, title }: Props) {
                       <td className="py-3 px-3 text-right">
                         {isOverall ? (
                           <span className={`font-semibold text-sm ${
-                            (item.heat_increment ?? 0) > 0 ? 'text-[#15803d]' : (item.heat_increment ?? 0) < 0 ? 'text-red-500' : 'text-primary-text'
+                            (item.heat_increment ?? 0) > 0 ? 'text-green-700' : (item.heat_increment ?? 0) < 0 ? 'text-red-500' : 'text-primary-text'
                           }`}>
                             {formatIncrement(item.heat_increment ?? 0)}
                           </span>
                         ) : (
-                          <span className="font-semibold text-sm text-[#15803d]">
+                          <span className="font-semibold text-sm text-green-700">
                             {formatHeat(item.heat_value || 0)}
                           </span>
                         )}

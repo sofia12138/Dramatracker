@@ -23,7 +23,10 @@ const config: Config = {
         },
       },
       boxShadow: {
-        card: '0 2px 8px rgba(0,0,0,0.1)',
+        card: '0 2px 8px rgba(0,0,0,0.1), 0 1px 3px rgba(0,0,0,0.08)',
+      },
+      borderRadius: {
+        card: '8px',
       },
     },
   },

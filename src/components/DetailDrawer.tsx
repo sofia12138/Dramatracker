@@ -229,7 +229,7 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
   return (
     <>
       <div className="fixed inset-0 bg-black/30 z-40" onClick={onClose} />
-      <div className="fixed right-0 top-0 h-full w-[560px] bg-white z-50 shadow-2xl overflow-y-auto">
+      <div className="fixed right-0 top-0 h-full w-[560px] bg-primary-card z-50 shadow-2xl overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-accent" />
@@ -241,9 +241,9 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
         ) : (
           <div className="flex flex-col">
             {/* Header */}
-            <div className="sticky top-0 bg-white border-b border-primary-border px-6 py-4 flex items-center justify-between z-10">
+            <div className="sticky top-0 bg-primary-card border-b border-primary-border px-6 py-4 flex items-center justify-between z-10">
               <h2 className="text-lg font-bold text-primary-text truncate">{data.drama.title}</h2>
-              <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
+              <button onClick={onClose} className="p-1 hover:bg-primary-sidebar rounded-lg transition-colors">
                 <svg className="w-5 h-5 text-primary-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>

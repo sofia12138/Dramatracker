@@ -157,7 +157,7 @@ export default function UsersPage() {
           <div
             key={toast.id}
             className={`px-4 py-3 rounded-lg shadow-lg text-sm font-medium animate-slide-in flex items-center gap-2 ${
-              toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-[#3b5bdb] text-white'
+              toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-primary-accent text-white'
             }`}
           >
             {toast.type === 'error' ? (
@@ -189,7 +189,7 @@ export default function UsersPage() {
               <input type="text" required value={form.username}
                 onChange={e => setForm({ ...form, username: e.target.value })}
                 disabled={!!editingUser}
-                className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent disabled:bg-gray-50 disabled:text-gray-400" />
+                className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent disabled:bg-primary-sidebar disabled:text-primary-text-muted" />
             </div>
             {!editingUser && (
               <div>
@@ -231,7 +231,7 @@ export default function UsersPage() {
       {/* Reset Password Dialog */}
       {resetPasswordId && (
         <div className="fixed inset-0 bg-black/30 z-40 flex items-center justify-center" onClick={() => setResetPasswordId(null)}>
-          <div className="bg-white rounded-xl p-6 w-96 shadow-xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-primary-card rounded-xl p-6 w-96 shadow-xl" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-primary-text mb-4">重置密码</h3>
             <p className="text-sm text-primary-text-secondary mb-3">
               为用户 <strong>{users.find(u => u.id === resetPasswordId)?.username}</strong> 设置新密码

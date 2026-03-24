@@ -142,7 +142,7 @@ export default function DataManagePage() {
               <label className="block text-sm text-primary-text-secondary mb-1">Playlet ID *</label>
               <input type="text" required value={form.playlet_id} disabled={!!editingDrama}
                 onChange={e => setForm({ ...form, playlet_id: e.target.value })}
-                className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent disabled:bg-gray-100" />
+                className="w-full px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent disabled:bg-primary-sidebar" />
             </div>
             <div>
               <label className="block text-sm text-primary-text-secondary mb-1">剧名 *</label>

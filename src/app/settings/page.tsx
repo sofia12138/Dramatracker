@@ -325,7 +325,7 @@ export default function SettingsPage() {
       <div className="fixed top-4 right-4 z-50 space-y-2">
         {toasts.map(toast => (
           <div key={toast.id} className={`px-4 py-3 rounded-lg shadow-lg text-sm font-medium animate-slide-in flex items-center gap-2 ${
-            toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-[#3b5bdb] text-white'
+            toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-primary-accent text-white'
           }`}>
             <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -389,7 +389,7 @@ export default function SettingsPage() {
           </div>
           <button
             onClick={() => handleAutoFetchChange(!autoFetchEnabled)}
-            className={`relative w-11 h-6 rounded-full transition-colors ${autoFetchEnabled ? 'bg-primary-accent' : 'bg-gray-300'}`}
+            className={`relative w-11 h-6 rounded-full transition-colors ${autoFetchEnabled ? 'bg-primary-accent' : 'bg-primary-border'}`}
           >
             <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${autoFetchEnabled ? 'translate-x-5' : ''}`} />
           </button>
@@ -511,7 +511,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm text-primary-text">{p.name}</span>
                     {!p.is_active && (
-                      <span className="px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500 rounded">已停用</span>
+                      <span className="px-1.5 py-0.5 text-[10px] bg-primary-sidebar text-primary-text-muted rounded">已停用</span>
                     )}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
@@ -526,7 +526,7 @@ export default function SettingsPage() {
 
                 <button
                   onClick={() => handleTogglePlatform(p)}
-                  className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${p.is_active ? 'bg-primary-accent' : 'bg-gray-300'}`}
+                  className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${p.is_active ? 'bg-primary-accent' : 'bg-primary-border'}`}
                 >
                   <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${p.is_active ? 'translate-x-4' : ''}`} />
                 </button>
@@ -539,7 +539,7 @@ export default function SettingsPage() {
                     <button onClick={() => handleDeletePlatform(p.id)}
                       className="px-2 py-1 text-[10px] bg-red-500 text-white rounded hover:bg-red-600">确认</button>
                     <button onClick={() => setConfirmDelete(null)}
-                      className="px-2 py-1 text-[10px] bg-gray-200 text-gray-600 rounded hover:bg-gray-300">取消</button>
+                      className="px-2 py-1 text-[10px] bg-primary-sidebar text-primary-text-secondary rounded hover:bg-primary-border">取消</button>
                   </div>
                 ) : (
                   <button onClick={() => setConfirmDelete(p.id)}
@@ -681,7 +681,7 @@ export default function SettingsPage() {
           )}
 
           {weeklyReport.content && (
-            <div className="bg-white border border-primary-border rounded-lg p-6 max-h-[600px] overflow-y-auto">
+            <div className="bg-primary-card border border-primary-border rounded-lg p-6 max-h-[600px] overflow-y-auto">
               <AIMarkdown content={weeklyReport.content} />
               {weeklyReport.loading && (
                 <span className="inline-block w-2 h-4 bg-primary-accent animate-pulse ml-0.5" />
@@ -727,7 +727,7 @@ export default function SettingsPage() {
                 确认清空
               </button>
               <button onClick={() => setConfirmClear(false)}
-                className="px-4 py-2 bg-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-300">
+                className="px-4 py-2 bg-primary-sidebar text-primary-text-secondary rounded-lg text-sm font-medium hover:bg-primary-border">
                 取消
               </button>
             </div>
@@ -748,7 +748,7 @@ export default function SettingsPage() {
 
 function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="bg-white rounded-lg border border-primary-border p-3 text-center">
+    <div className="bg-primary-card rounded-lg border border-primary-border p-3 text-center">
       <p className={`text-2xl font-bold ${color}`}>{value.toLocaleString()}</p>
       <p className="text-xs text-primary-text-muted mt-1">{label}</p>
     </div>

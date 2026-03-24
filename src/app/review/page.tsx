@@ -181,7 +181,7 @@ export default function ReviewPage() {
             className={`px-4 py-3 rounded-lg shadow-lg text-sm font-medium animate-slide-in flex items-center gap-2 ${
               toast.type === 'error' ? 'bg-red-500 text-white' :
               toast.type === 'warn' ? 'bg-amber-500 text-white' :
-              'bg-[#3b5bdb] text-white'
+              'bg-primary-accent text-white'
             }`}
           >
             {toast.type === 'error' ? (
@@ -210,12 +210,12 @@ export default function ReviewPage() {
           onClick={() => { setSelectedPlatform(''); setPage(1); setSelectedIds(new Set()); }}
           className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-all border ${
             !selectedPlatform
-              ? 'bg-[#eef2ff] text-[#3b5bdb] border-[#c5d0fa] shadow-sm'
+              ? 'bg-primary-accent-bg text-primary-accent border-primary-accent-border shadow-sm'
               : 'bg-primary-card text-primary-text-secondary border-transparent hover:bg-primary-sidebar'
           }`}
         >
           全部
-          <span className={`ml-1.5 text-xs ${!selectedPlatform ? 'text-[#3b5bdb]/70' : 'text-primary-text-muted'}`}>
+          <span className={`ml-1.5 text-xs ${!selectedPlatform ? 'text-primary-accent/70' : 'text-primary-text-muted'}`}>
             {total}
           </span>
         </button>
@@ -228,13 +228,13 @@ export default function ReviewPage() {
               onClick={() => { setSelectedPlatform(p); setPage(1); setSelectedIds(new Set()); }}
               className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-all border ${
                 active
-                  ? 'bg-[#eef2ff] text-[#3b5bdb] border-[#c5d0fa] shadow-sm'
+                  ? 'bg-primary-accent-bg text-primary-accent border-primary-accent-border shadow-sm'
                   : 'bg-primary-card text-primary-text-secondary border-transparent hover:bg-primary-sidebar'
               }`}
             >
               {p}
               {count > 0 && (
-                <span className={`ml-1.5 text-xs ${active ? 'text-[#3b5bdb]/70' : 'text-primary-text-muted'}`}>
+                <span className={`ml-1.5 text-xs ${active ? 'text-primary-accent/70' : 'text-primary-text-muted'}`}>
                   {count}
                 </span>
               )}
@@ -248,11 +248,11 @@ export default function ReviewPage() {
         <div className="card !py-3 !px-4 flex items-center gap-3 flex-wrap">
           <button
             onClick={toggleSelectAll}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-primary-border rounded-lg bg-white hover:bg-primary-card transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-primary-border rounded-lg bg-primary-card hover:bg-primary-sidebar transition-colors"
           >
             <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${
               selectedIds.size === dramas.length && dramas.length > 0
-                ? 'bg-[#3b5bdb] border-[#3b5bdb]'
+                ? 'bg-primary-accent border-primary-accent'
                 : 'border-primary-border'
             }`}>
               {selectedIds.size === dramas.length && dramas.length > 0 && (
@@ -270,21 +270,21 @@ export default function ReviewPage() {
             <button
               onClick={() => handleBatchClassify('ai_real')}
               disabled={selectedIds.size === 0}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg transition-all disabled:opacity-40 bg-[#eff6ff] text-[#1d4ed8] hover:bg-blue-100"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg transition-all disabled:opacity-40 bg-[#eff6ff] text-[#1d4ed8] hover:bg-[#dbeafe]"
             >
               批量AI真人剧
             </button>
             <button
               onClick={() => handleBatchClassify('ai_manga')}
               disabled={selectedIds.size === 0}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg transition-all disabled:opacity-40 bg-[#f5f0ff] text-[#7c3aed] hover:bg-purple-100"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg transition-all disabled:opacity-40 bg-[#f5f0ff] text-[#7c3aed] hover:bg-[#ede9fe]"
             >
               批量AI漫剧
             </button>
             <button
               onClick={() => handleBatchClassify('real')}
               disabled={selectedIds.size === 0}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg transition-all disabled:opacity-40 bg-[#f9fafb] text-[#6b7280] border border-[#d0d5e0] hover:bg-gray-100"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg transition-all disabled:opacity-40 bg-primary-card text-primary-text-secondary border border-primary-border hover:bg-primary-sidebar"
             >
               批量真人剧
             </button>
@@ -316,15 +316,15 @@ export default function ReviewPage() {
               return (
                 <div
                   key={drama.id}
-                  className={`bg-white rounded-xl border overflow-hidden transition-all duration-300 group ${
+                  className={`bg-primary-card rounded-xl border overflow-hidden transition-all duration-300 group ${
                     isFading ? 'opacity-0 scale-95' : 'opacity-100 scale-100'
                   } ${
-                    isSelected ? 'border-[#3b5bdb] ring-1 ring-[#c5d0fa]' : 'border-primary-border hover:shadow-card'
+                    isSelected ? 'border-primary-accent ring-1 ring-primary-accent-border' : 'border-primary-border hover:shadow-card'
                   }`}
                 >
                   {/* Cover */}
                   <div
-                    className="relative aspect-[2/3] w-full bg-gray-100 cursor-pointer"
+                    className="relative aspect-[2/3] w-full bg-primary-sidebar cursor-pointer"
                     onClick={() => toggleSelect(drama.id)}
                   >
                     {drama.cover_url ? (
@@ -340,8 +340,8 @@ export default function ReviewPage() {
                     {/* Selection checkbox overlay */}
                     <div className={`absolute top-2 left-2 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
                       isSelected
-                        ? 'bg-[#3b5bdb] border-[#3b5bdb]'
-                        : 'bg-white/80 border-white/60 opacity-0 group-hover:opacity-100'
+                        ? 'bg-primary-accent border-primary-accent'
+                        : 'bg-primary-card/80 border-primary-border/60 opacity-0 group-hover:opacity-100'
                     }`}>
                       {isSelected && (
                         <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -396,21 +396,21 @@ export default function ReviewPage() {
                   <div className="flex border-t border-primary-border">
                     <button
                       onClick={() => handleClassify(drama.id, 'ai_real')}
-                      className="flex-1 flex items-center justify-center bg-[#eff6ff] text-[#1d4ed8] hover:bg-blue-100 transition-colors"
+                      className="flex-1 flex items-center justify-center bg-[#eff6ff] text-[#1d4ed8] hover:bg-[#dbeafe] transition-colors"
                       style={{ height: 24, fontSize: 10, gap: 4 }}
                     >
                       AI真人剧
                     </button>
                     <button
                       onClick={() => handleClassify(drama.id, 'ai_manga')}
-                      className="flex-1 flex items-center justify-center bg-[#f5f0ff] text-[#7c3aed] hover:bg-purple-100 transition-colors border-l border-r border-primary-border/50"
+                      className="flex-1 flex items-center justify-center bg-[#f5f0ff] text-[#7c3aed] hover:bg-[#ede9fe] transition-colors border-l border-r border-primary-border/50"
                       style={{ height: 24, fontSize: 10, gap: 4 }}
                     >
                       AI漫剧
                     </button>
                     <button
                       onClick={() => handleClassify(drama.id, 'real')}
-                      className="flex-1 flex items-center justify-center bg-[#f9fafb] text-[#6b7280] hover:bg-gray-100 transition-colors"
+                      className="flex-1 flex items-center justify-center bg-primary-card text-primary-text-secondary hover:bg-primary-sidebar transition-colors"
                       style={{ height: 24, fontSize: 10, borderTop: '0.5px solid #d0d5e0' }}
                     >
                       真人剧
@@ -427,9 +427,9 @@ export default function ReviewPage() {
               <span className="text-sm text-primary-text-muted">第 {page} 页，共 {Math.ceil(total / 40)} 页</span>
               <div className="flex gap-2">
                 <button onClick={() => { setPage(p => Math.max(1, p - 1)); setSelectedIds(new Set()); }} disabled={page === 1}
-                  className="px-3 py-1.5 text-sm border border-primary-border rounded-lg disabled:opacity-50 hover:bg-primary-card bg-white">上一页</button>
+                  className="px-3 py-1.5 text-sm border border-primary-border rounded-lg disabled:opacity-50 hover:bg-primary-sidebar bg-primary-card">上一页</button>
                 <button onClick={() => { setPage(p => p + 1); setSelectedIds(new Set()); }} disabled={page * 40 >= total}
-                  className="px-3 py-1.5 text-sm border border-primary-border rounded-lg disabled:opacity-50 hover:bg-primary-card bg-white">下一页</button>
+                  className="px-3 py-1.5 text-sm border border-primary-border rounded-lg disabled:opacity-50 hover:bg-primary-sidebar bg-primary-card">下一页</button>
               </div>
             </div>
           )}

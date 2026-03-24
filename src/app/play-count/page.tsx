@@ -174,7 +174,7 @@ export default function PlayCountPage() {
           <div key={toast.id} className={`px-4 py-3 rounded-lg shadow-lg text-sm font-medium animate-slide-in flex items-center gap-2 ${
             toast.type === 'error' ? 'bg-red-500 text-white' :
             toast.type === 'warn' ? 'bg-amber-500 text-white' :
-            'bg-[#3b5bdb] text-white'
+            'bg-primary-accent text-white'
           }`}>
             <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={toast.type === 'error' ? 'M6 18L18 6M6 6l12 12' : 'M5 13l4 4L19 7'} />
@@ -189,7 +189,7 @@ export default function PlayCountPage() {
         <h1 className="text-2xl font-bold text-primary-text">播放量管理</h1>
         <div className="flex items-center gap-2">
           <button onClick={handleExport}
-            className="px-3 py-1.5 text-sm font-medium border border-primary-border rounded-lg bg-white hover:bg-primary-card transition-colors flex items-center gap-1.5">
+            className="px-3 py-1.5 text-sm font-medium border border-primary-border rounded-lg bg-primary-card hover:bg-primary-sidebar transition-colors flex items-center gap-1.5">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
@@ -244,7 +244,7 @@ export default function PlayCountPage() {
           onClick={() => setSelectedPlatform('')}
           className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-all border ${
             !selectedPlatform
-              ? 'bg-[#eef2ff] text-[#3b5bdb] border-[#c5d0fa] shadow-sm'
+              ? 'bg-primary-accent-bg text-primary-accent border-primary-accent-border shadow-sm'
               : 'bg-primary-card text-primary-text-secondary border-transparent hover:bg-primary-sidebar'
           }`}>
           全部
@@ -254,7 +254,7 @@ export default function PlayCountPage() {
             onClick={() => setSelectedPlatform(p)}
             className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-all border ${
               selectedPlatform === p
-                ? 'bg-[#eef2ff] text-[#3b5bdb] border-[#c5d0fa] shadow-sm'
+                ? 'bg-primary-accent-bg text-primary-accent border-primary-accent-border shadow-sm'
                 : 'bg-primary-card text-primary-text-secondary border-transparent hover:bg-primary-sidebar'
             }`}>
             {p}
@@ -297,7 +297,7 @@ export default function PlayCountPage() {
                         {row.cover_url ? (
                           <img src={row.cover_url} alt="" className="w-9 h-12 object-cover rounded border border-primary-border" />
                         ) : (
-                          <div className="w-9 h-12 rounded bg-gray-100 border border-primary-border flex items-center justify-center">
+                          <div className="w-9 h-12 rounded bg-primary-sidebar border border-primary-border flex items-center justify-center">
                             <svg className="w-4 h-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14" />
                             </svg>

@@ -249,7 +249,7 @@ export default function DashboardPage() {
               onClick={() => handleModeChange(t.key)}
               className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-all border ${
                 mode === t.key
-                  ? 'bg-[#eef2ff] text-[#3b5bdb] border-[#c5d0fa]'
+                  ? 'bg-primary-accent-bg text-primary-accent border-primary-accent-border'
                   : 'bg-primary-card text-primary-text-secondary border-transparent hover:bg-primary-sidebar'
               }`}
             >
@@ -257,7 +257,7 @@ export default function DashboardPage() {
             </button>
           ))}
           {showCustom && (
-            <div className="absolute top-full right-0 mt-2 bg-white rounded-xl shadow-lg border border-primary-border p-4 z-10 flex items-end gap-2">
+            <div className="absolute top-full right-0 mt-2 bg-primary-card rounded-xl shadow-lg border border-primary-border p-4 z-10 flex items-end gap-2">
               <div>
                 <label className="block text-xs text-primary-text-muted mb-1">开始日期</label>
                 <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)}
@@ -280,8 +280,8 @@ export default function DashboardPage() {
       {/* Overview Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card flex items-center gap-4 py-5 px-5">
-          <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center shrink-0">
-            <svg className="w-6 h-6 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="w-12 h-12 rounded-xl bg-primary-accent-bg flex items-center justify-center shrink-0">
+            <svg className="w-6 h-6 text-primary-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
             </svg>
           </div>
