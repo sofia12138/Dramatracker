@@ -518,6 +518,52 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
     log(f"  🏁 {platform_name} 完成")
 
 
+def backfill_trends(cookie: str, headers: dict, conn: sqlite3.Connection):
+    """补抓已入库剧集的历史趋势数据（trend 接口支持 startDate/endDate）。
+    榜单排名快照不补抓——listPlayletDistribution 不支持历史日期查询。"""
+    log("⚠️  榜单接口不支持历史补抓，已跳过伪历史写入")
+    log("📈 仅补抓历史趋势数据（invest_trend）...")
+
+    rows = conn.execute(
+        "SELECT playlet_id, first_air_date FROM drama WHERE first_air_date IS NOT NULL AND first_air_date != ''"
+    ).fetchall()
+    log(f"  共 {len(rows)} 部剧集需要补抓趋势")
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    for idx, (playlet_id, first_seen) in enumerate(rows, 1):
+        try:
+            existing_count = conn.execute(
+                "SELECT COUNT(*) FROM invest_trend WHERE playlet_id = ?", (playlet_id,)
+            ).fetchone()[0]
+            if existing_count > 7:
+                debug(f"[{idx}/{len(rows)}] {playlet_id} 已有 {existing_count} 条趋势，跳过")
+                continue
+
+            debug(f"[{idx}/{len(rows)}] 补抓趋势: {playlet_id}, {first_seen} ~ {today_str}")
+            trend_data = fetch_trend(cookie, playlet_id, first_seen, today_str, headers)
+            inserted = 0
+            for t in trend_data:
+                stat_date = t.get("statDate", "")
+                num = t.get("num", 0)
+                if stat_date:
+                    platform_rows = conn.execute(
+                        "SELECT DISTINCT platform FROM ranking_snapshot WHERE playlet_id = ?",
+                        (playlet_id,),
+                    ).fetchall()
+                    for (plat,) in platform_rows:
+                        insert_trend(conn, playlet_id, plat, stat_date, num)
+                        inserted += 1
+            if inserted:
+                debug(f"  写入 {inserted} 条趋势")
+            time.sleep(2)
+        except Exception as e:
+            debug(f"  趋势补抓失败 {playlet_id}: {e}")
+            log_error(f"backfill trend {playlet_id}: {e}")
+
+    conn.commit()
+    log("📈 趋势补抓完成")
+
+
 def run(backfill_days: int = 0):
     log("=" * 60)
     log("DramaTracker DataEye 数据抓取")
@@ -533,32 +579,29 @@ def run(backfill_days: int = 0):
     headers = build_headers(cookie)
     conn = get_db()
 
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # 无论是否 backfill，ranking 只抓今天（接口只返回当前排名）
+    log(f"\n{'─' * 40}")
+    log(f"📅 抓取当天榜单: {today_str}")
+    log(f"{'─' * 40}")
+
+    for plat_idx, platform in enumerate(PLATFORMS, 1):
+        try:
+            log(f"\n--- 平台 [{plat_idx}/{len(PLATFORMS)}] ---")
+            scrape_platform(cookie, headers, conn, platform, today_str)
+        except SystemExit:
+            raise
+        except Exception as e:
+            log(f"❌ 平台 {platform['name']} 整体失败: {e}")
+            log_error(f"platform {platform['name']}: {traceback.format_exc()}")
+
+    # backfill 模式：仅补抓趋势历史数据
     if backfill_days > 0:
-        log(f"📅 历史补抓模式: 过去 {backfill_days} 天")
-        dates = [
-            (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-            for i in range(backfill_days, -1, -1)
-        ]
-    else:
-        dates = [datetime.now().strftime("%Y-%m-%d")]
-
-    debug(f"待抓取日期: {dates}")
-    debug(f"平台数量: {len(PLATFORMS)}")
-
-    for date_idx, date_str in enumerate(dates, 1):
         log(f"\n{'─' * 40}")
-        log(f"📅 抓取日期: {date_str} ({date_idx}/{len(dates)})")
+        log(f"📅 历史补抓模式: 补抓趋势数据")
         log(f"{'─' * 40}")
-
-        for plat_idx, platform in enumerate(PLATFORMS, 1):
-            try:
-                log(f"\n--- 平台 [{plat_idx}/{len(PLATFORMS)}] ---")
-                scrape_platform(cookie, headers, conn, platform, date_str)
-            except SystemExit:
-                raise
-            except Exception as e:
-                log(f"❌ 平台 {platform['name']} 整体失败: {e}")
-                log_error(f"platform {platform['name']}: {traceback.format_exc()}")
+        backfill_trends(cookie, headers, conn)
 
     debug("关闭数据库连接")
     conn.close()

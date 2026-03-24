@@ -121,6 +121,8 @@ export default function RankingTable({ type, title }: Props) {
   const [latestDate, setLatestDate] = useState('');
   const [lastUpdateTime, setLastUpdateTime] = useState('');
   const [selectedPlayletId, setSelectedPlayletId] = useState<string | null>(null);
+  const [accumulating, setAccumulating] = useState(false);
+  const [snapshotDays, setSnapshotDays] = useState(0);
 
   const isOverall = selectedPlatform === 'all';
 
@@ -151,6 +153,8 @@ export default function RankingTable({ type, title }: Props) {
 
       setData(items);
       setLatestDate(result.latestDate || '');
+      setAccumulating(result.dataAccumulating || false);
+      setSnapshotDays(result.snapshotDays || 0);
       setLastUpdateTime(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch {
       setData([]);
@@ -244,6 +248,16 @@ export default function RankingTable({ type, title }: Props) {
           );
         })}
       </div>
+
+      {/* Data accumulating hint */}
+      {accumulating && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-primary-accent-bg border border-primary-accent-border rounded-lg text-sm text-primary-accent">
+          <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span>历史数据积累中（已有 {snapshotDays} 天快照），每日抓取后将自动丰富，当前展示已有数据</span>
+        </div>
+      )}
 
       {/* Table */}
       <div className="card !p-0 overflow-hidden">

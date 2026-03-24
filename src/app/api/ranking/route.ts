@@ -17,6 +17,14 @@ export async function GET(request: NextRequest) {
     ).get() as { d: string | null };
     const latestDate = latestDateRow?.d || '';
 
+    const distinctDaysRow = db.prepare(
+      'SELECT COUNT(DISTINCT snapshot_date) as cnt FROM ranking_snapshot'
+    ).get() as { cnt: number };
+    const snapshotDays = distinctDaysRow?.cnt || 0;
+
+    const requiredDays = mode === '7days' ? 7 : mode === '30days' ? 30 : 1;
+    const dataAccumulating = snapshotDays < requiredDays && mode !== 'today' && mode !== 'custom';
+
     let dateFilter = '';
     const params: unknown[] = [];
 
@@ -68,7 +76,9 @@ export async function GET(request: NextRequest) {
       const data = db.prepare(sql).all(...params, limit);
 
       // Get previous period data for rank change
-      const prevData = getPreviousPeriodRanks(db, platform, isAiDrama, mode, latestDate, startDate, endDate);
+      // When accumulating data, always fall back to "previous snapshot day" comparison
+      const effectiveMode = dataAccumulating ? 'today' : mode;
+      const prevData = getPreviousPeriodRanks(db, platform, isAiDrama, effectiveMode, latestDate, startDate, endDate);
 
       const rows = data as Array<{ playlet_id: string; platform: string; rank: number; [k: string]: unknown }>;
       const enriched = rows.map((item) => {
@@ -90,7 +100,7 @@ export async function GET(request: NextRequest) {
         sparkline: sparklines.get(item.playlet_id) || [],
       }));
 
-      return NextResponse.json({ data: result, latestDate, total: result.length });
+      return NextResponse.json({ data: result, latestDate, total: result.length, dataAccumulating, snapshotDays });
     }
 
     // "总榜" mode: deduplicate, aggregate across platforms
@@ -112,7 +122,9 @@ export async function GET(request: NextRequest) {
     const rawData = db.prepare(sql).all(...params) as Record<string, unknown>[];
 
     // Get heat values from previous period for increment calculation
-    const prevHeatMap = getPreviousHeatValues(db, isAiDrama, mode, latestDate, startDate, endDate);
+    // When accumulating data, fall back to "previous snapshot day" for meaningful comparison
+    const effectiveMode = dataAccumulating ? 'today' : mode;
+    const prevHeatMap = getPreviousHeatValues(db, isAiDrama, effectiveMode, latestDate, startDate, endDate);
 
     // Deduplicate: keep the platform record with max heat increment for each drama
     const dramaMap = new Map<string, {
@@ -152,7 +164,7 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => b.heatIncrement - a.heatIncrement)
       .slice(0, limit);
 
-    const prevRankMap = getPreviousPeriodOverallRanks(db, isAiDrama, mode, latestDate, startDate, endDate);
+    const prevRankMap = getPreviousPeriodOverallRanks(db, isAiDrama, effectiveMode, latestDate, startDate, endDate);
 
     const sparklines = getInvestTrendSparklines(
       db, sorted.map(e => ({ playlet_id: e.item.playlet_id as string, platform: e.bestPlatform }))
@@ -176,7 +188,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ data: result, latestDate, total: result.length });
+    return NextResponse.json({ data: result, latestDate, total: result.length, dataAccumulating, snapshotDays });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });
