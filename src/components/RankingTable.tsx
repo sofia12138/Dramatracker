@@ -384,16 +384,20 @@ export default function RankingTable({ type, title }: Props) {
 
                       {/* Tags */}
                       <td className="py-3 px-3">
-                        <div className="flex items-center gap-1 flex-nowrap">
-                          {tags.slice(0, 2).map((tag: string, i: number) => (
-                            <span key={i} className="px-1.5 py-0.5 text-[11px] rounded bg-orange-50 text-orange-600 border border-orange-200 whitespace-nowrap">
-                              {tag}
-                            </span>
-                          ))}
-                          {tags.length > 2 && (
-                            <span className="text-[11px] text-primary-text-muted whitespace-nowrap">+{tags.length - 2}</span>
-                          )}
-                        </div>
+                        {tags.length > 0 ? (
+                          <div className="flex items-center gap-1 flex-nowrap">
+                            {tags.slice(0, 2).map((tag: string, i: number) => (
+                              <span key={i} className="px-1.5 py-0.5 text-[11px] rounded bg-orange-50 text-orange-600 border border-orange-200 whitespace-nowrap">
+                                {tag}
+                              </span>
+                            ))}
+                            {tags.length > 2 && (
+                              <span className="text-[11px] text-primary-text-muted whitespace-nowrap">+{tags.length - 2}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-primary-text-muted">-</span>
+                        )}
                       </td>
 
                       {/* Language */}
