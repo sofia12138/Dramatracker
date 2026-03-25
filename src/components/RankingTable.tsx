@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Sparkline from './Sparkline';
 import DetailDrawer from './DetailDrawer';
+import CompetitorAnalysisPanel from './CompetitorAnalysisPanel';
 
 interface RankingItem {
   playlet_id: string;
@@ -35,7 +36,7 @@ interface Props {
   title: string;
 }
 
-const PLATFORMS = ['all', 'ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel'];
+const FALLBACK_PLATFORMS = ['all', 'ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
 const PLATFORM_LABELS: Record<string, string> = { all: '总榜' };
 const LANGUAGES = ['全部', 'English', 'Spanish', 'Portuguese', 'French', 'Indonesian', 'German'];
 const TIME_MODES = [
@@ -123,6 +124,18 @@ export default function RankingTable({ type, title }: Props) {
   const [selectedPlayletId, setSelectedPlayletId] = useState<string | null>(null);
   const [accumulating, setAccumulating] = useState(false);
   const [snapshotDays, setSnapshotDays] = useState(0);
+  const [showCompetitor, setShowCompetitor] = useState(false);
+  const [platforms, setPlatforms] = useState<string[]>(FALLBACK_PLATFORMS);
+
+  useEffect(() => {
+    fetch('/api/platforms')
+      .then(r => r.json())
+      .then((list: { name: string; is_active: number }[]) => {
+        const active = list.filter(p => p.is_active).map(p => p.name);
+        if (active.length > 0) setPlatforms(['all', ...active]);
+      })
+      .catch(() => {});
+  }, []);
 
   const isOverall = selectedPlatform === 'all';
 
@@ -221,6 +234,20 @@ export default function RankingTable({ type, title }: Props) {
               刷新
             </button>
 
+            <button
+              onClick={() => setShowCompetitor(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all border ${
+                showCompetitor
+                  ? 'bg-primary-accent text-white border-primary-accent'
+                  : 'border-primary-border bg-white text-primary-text-secondary hover:text-primary-accent hover:border-primary-accent'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              竞品增长分析
+            </button>
+
             {lastUpdateTime && (
               <span className="text-xs text-primary-text-muted whitespace-nowrap">更新于 {lastUpdateTime}</span>
             )}
@@ -230,7 +257,7 @@ export default function RankingTable({ type, title }: Props) {
 
       {/* Platform Tabs */}
       <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-hide">
-        {PLATFORMS.map(p => {
+        {platforms.map(p => {
           const label = PLATFORM_LABELS[p] || p;
           const active = selectedPlatform === p;
           return (
@@ -314,7 +341,9 @@ export default function RankingTable({ type, title }: Props) {
                             </span>
                           )}
                           {item.orig_rank !== undefined && item.orig_rank !== item.rank && (
-                            <span className="text-[10px] text-primary-text-muted mt-0.5">#{item.orig_rank}</span>
+                            <span className="text-[10px] text-primary-text-muted mt-0.5">
+                              {isOverall ? `#${item.orig_rank}` : `原榜 #${item.orig_rank}`}
+                            </span>
                           )}
                         </div>
                       </td>
@@ -464,6 +493,11 @@ export default function RankingTable({ type, title }: Props) {
           </div>
         )}
       </div>
+
+      {/* Competitor Analysis Panel */}
+      {showCompetitor && (
+        <CompetitorAnalysisPanel type={type} onClose={() => setShowCompetitor(false)} />
+      )}
 
       {/* Detail Drawer */}
       <DetailDrawer

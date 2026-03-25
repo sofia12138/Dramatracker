@@ -26,9 +26,16 @@ interface Toast {
   id: number;
   message: string;
   type: string;
+  undoAction?: () => void;
 }
 
-const PLATFORMS = ['ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel'];
+interface ConfirmInfo {
+  dramaId: number;
+  dramaTitle: string;
+  classifyType: string;
+}
+
+const PLATFORMS = ['ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
 
 function formatHeat(val: number): string {
   if (!val) return '0';
@@ -57,12 +64,17 @@ export default function ReviewPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [fadingOut, setFadingOut] = useState<Set<number>>(new Set());
+  const [pendingType, setPendingType] = useState<Map<number, string>>(new Map());
+  const [confirmInfo, setConfirmInfo] = useState<ConfirmInfo | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const toastId = useRef(0);
+  const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
-  const showToast = useCallback((message: string, type = 'success') => {
+  const showToast = useCallback((message: string, type = 'success', undoAction?: () => void) => {
     const id = ++toastId.current;
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
+    setToasts(prev => [...prev, { id, message, type, undoAction }]);
+    const timer = setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), undoAction ? 5000 : 3000);
+    if (undoAction) undoTimers.current.set(id, timer);
   }, []);
 
   const fetchCounts = useCallback(() => {
@@ -95,7 +107,25 @@ export default function ReviewPage() {
   useEffect(() => { fetchCounts(); }, [fetchCounts]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleClassify = async (dramaId: number, type: string) => {
+  const selectType = (dramaId: number, type: string) => {
+    setPendingType(prev => {
+      const m = new Map(prev);
+      if (m.get(dramaId) === type) m.delete(dramaId);
+      else m.set(dramaId, type);
+      return m;
+    });
+  };
+
+  const requestConfirm = (dramaId: number) => {
+    const type = pendingType.get(dramaId);
+    if (!type) return;
+    const drama = dramas.find(d => d.id === dramaId);
+    setConfirmInfo({ dramaId, dramaTitle: drama?.title || '', classifyType: type });
+  };
+
+  const executeClassify = async (dramaId: number, type: string) => {
+    setSubmitting(true);
+    setConfirmInfo(null);
     setFadingOut(prev => new Set(prev).add(dramaId));
 
     try {
@@ -106,18 +136,34 @@ export default function ReviewPage() {
       });
 
       const drama = dramas.find(d => d.id === dramaId);
-      showToast(`"${drama?.title || ''}" 已标记为${TYPE_LABELS[type]}`);
+
+      const undoAction = async () => {
+        await fetch(`/api/drama/${dramaId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ is_ai_drama: null }),
+        });
+        setDramas(prev => drama ? [drama, ...prev] : prev);
+        setTotal(prev => prev + 1);
+        fetchCounts();
+        showToast('已撤销');
+      };
+
+      showToast(`"${drama?.title || ''}" 已标记为${TYPE_LABELS[type]}`, 'success', undoAction);
 
       setTimeout(() => {
         setDramas(prev => prev.filter(d => d.id !== dramaId));
         setFadingOut(prev => { const s = new Set(prev); s.delete(dramaId); return s; });
         setSelectedIds(prev => { const s = new Set(prev); s.delete(dramaId); return s; });
+        setPendingType(prev => { const m = new Map(prev); m.delete(dramaId); return m; });
         setTotal(prev => Math.max(0, prev - 1));
         fetchCounts();
       }, 300);
     } catch {
       setFadingOut(prev => { const s = new Set(prev); s.delete(dramaId); return s; });
       showToast('操作失败，请重试', 'error');
+    } finally {
+      setTimeout(() => setSubmitting(false), 500);
     }
   };
 
@@ -189,10 +235,62 @@ export default function ReviewPage() {
             ) : (
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
             )}
-            {toast.message}
+            <span className="flex-1">{toast.message}</span>
+            {toast.undoAction && (
+              <button
+                onClick={() => {
+                  toast.undoAction?.();
+                  setToasts(prev => prev.filter(t => t.id !== toast.id));
+                  const timer = undoTimers.current.get(toast.id);
+                  if (timer) { clearTimeout(timer); undoTimers.current.delete(toast.id); }
+                }}
+                className="ml-2 px-2 py-0.5 text-xs font-bold bg-white/20 rounded hover:bg-white/30 transition-colors"
+              >
+                撤销
+              </button>
+            )}
           </div>
         ))}
       </div>
+
+      {/* Confirm Dialog */}
+      {confirmInfo && (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-50" onClick={() => setConfirmInfo(null)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-primary-card rounded-xl shadow-2xl p-6 w-[360px] border border-primary-border">
+            <h3 className="text-base font-semibold text-primary-text mb-3">确认审核分类</h3>
+            <div className="space-y-2 mb-5">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-primary-text-muted w-12 shrink-0">剧名</span>
+                <span className="font-medium text-primary-text truncate">{confirmInfo.dramaTitle}</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-primary-text-muted w-12 shrink-0">分类</span>
+                <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                  confirmInfo.classifyType === 'ai_real' ? 'bg-[#eff6ff] text-[#1d4ed8]' :
+                  confirmInfo.classifyType === 'ai_manga' ? 'bg-[#f5f0ff] text-[#7c3aed]' :
+                  'bg-gray-100 text-gray-600'
+                }`}>
+                  {TYPE_LABELS[confirmInfo.classifyType]}
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setConfirmInfo(null)}
+                className="px-4 py-1.5 text-sm border border-primary-border rounded-lg hover:bg-primary-sidebar transition-colors">
+                取消
+              </button>
+              <button
+                onClick={() => executeClassify(confirmInfo.dramaId, confirmInfo.classifyType)}
+                disabled={submitting}
+                className="px-4 py-1.5 text-sm font-medium bg-primary-accent text-white rounded-lg hover:opacity-90 transition-all disabled:opacity-60"
+              >
+                确认提交
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -392,29 +490,47 @@ export default function ReviewPage() {
                     </div>
                   </div>
 
-                  {/* Action Buttons */}
-                  <div className="flex border-t border-primary-border">
-                    <button
-                      onClick={() => handleClassify(drama.id, 'ai_real')}
-                      className="flex-1 flex items-center justify-center bg-[#eff6ff] text-[#1d4ed8] hover:bg-[#dbeafe] transition-colors"
-                      style={{ height: 24, fontSize: 10, gap: 4 }}
-                    >
-                      AI真人剧
-                    </button>
-                    <button
-                      onClick={() => handleClassify(drama.id, 'ai_manga')}
-                      className="flex-1 flex items-center justify-center bg-[#f5f0ff] text-[#7c3aed] hover:bg-[#ede9fe] transition-colors border-l border-r border-primary-border/50"
-                      style={{ height: 24, fontSize: 10, gap: 4 }}
-                    >
-                      AI漫剧
-                    </button>
-                    <button
-                      onClick={() => handleClassify(drama.id, 'real')}
-                      className="flex-1 flex items-center justify-center bg-primary-card text-primary-text-secondary hover:bg-primary-sidebar transition-colors"
-                      style={{ height: 24, fontSize: 10, borderTop: '0.5px solid #d0d5e0' }}
-                    >
-                      真人剧
-                    </button>
+                  {/* Action Buttons - Two-step: select then confirm */}
+                  <div className="border-t border-primary-border">
+                    <div className="flex">
+                      {([
+                        { key: 'ai_real', label: 'AI真人剧', bg: 'bg-[#eff6ff]', bgActive: 'bg-[#1d4ed8]', text: 'text-[#1d4ed8]' },
+                        { key: 'ai_manga', label: 'AI漫剧', bg: 'bg-[#f5f0ff]', bgActive: 'bg-[#7c3aed]', text: 'text-[#7c3aed]' },
+                        { key: 'real', label: '真人剧', bg: 'bg-gray-50', bgActive: 'bg-gray-500', text: 'text-gray-600' },
+                      ] as const).map((opt, idx) => {
+                        const selected = pendingType.get(drama.id) === opt.key;
+                        return (
+                          <button
+                            key={opt.key}
+                            onClick={() => selectType(drama.id, opt.key)}
+                            className={`flex-1 flex items-center justify-center transition-all ${
+                              selected ? `${opt.bgActive} text-white font-semibold` : `${opt.bg} ${opt.text} hover:opacity-80`
+                            } ${idx > 0 ? 'border-l border-primary-border/30' : ''}`}
+                            style={{ height: 28, fontSize: 10, gap: 3 }}
+                          >
+                            {selected && (
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {pendingType.has(drama.id) && (
+                      <button
+                        onClick={() => requestConfirm(drama.id)}
+                        disabled={submitting}
+                        className="w-full flex items-center justify-center gap-1 bg-primary-accent text-white hover:opacity-90 transition-all disabled:opacity-60 font-medium"
+                        style={{ height: 26, fontSize: 11 }}
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        确认提交
+                      </button>
+                    )}
                   </div>
                 </div>
               );

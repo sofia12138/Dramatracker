@@ -52,6 +52,8 @@ PLATFORMS = [
     {"name": "HiShort",   "productIds": [413255, 413256]},
     {"name": "NetShort",  "productIds": [457874, 457263]},
     {"name": "Storeel",   "productIds": [465334, 465335]},
+    {"name": "iDrama",    "productIds": [2955897, 2953006]},
+    {"name": "StardustTV","productIds": [453499, 446088]},
 ]
 
 # ---------------------------------------------------------------------------

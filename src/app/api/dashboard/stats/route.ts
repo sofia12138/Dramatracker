@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
-const PLATFORMS = ['ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel'];
-
 export async function GET(request: NextRequest) {
   try {
     const db = getDb();
+    const PLATFORMS = (db.prepare("SELECT name FROM platforms WHERE is_active = 1 ORDER BY id").all() as { name: string }[]).map(r => r.name);
     const { searchParams } = new URL(request.url);
     const mode = searchParams.get('mode') || 'today';
     const startDate = searchParams.get('start_date') || '';
@@ -90,29 +89,40 @@ export async function GET(request: NextRequest) {
       ORDER BY cnt DESC
     `).all(dateFrom, dateTo) as { language: string; cnt: number }[];
 
-    // === Chart 3: Tag distribution (top 10) ===
-    const tagDramas = db.prepare(`
-      SELECT DISTINCT d.tags
-      FROM drama d
-      INNER JOIN ranking_snapshot rs ON d.playlet_id = rs.playlet_id
-      WHERE rs.snapshot_date >= ? AND rs.snapshot_date <= ?
-        AND d.is_ai_drama IN ('ai_real', 'ai_manga')
-        AND d.tags IS NOT NULL AND d.tags != '[]'
-    `).all(dateFrom, dateTo) as { tags: string }[];
+    // === Chart 3: Tag distribution by type (top 5 each) ===
+    function getTagsByType(aiType: string): { tag: string; count: number }[] {
+      const rows = db.prepare(`
+        SELECT DISTINCT d.tags
+        FROM drama d
+        INNER JOIN ranking_snapshot rs ON d.playlet_id = rs.playlet_id
+        WHERE rs.snapshot_date >= ? AND rs.snapshot_date <= ?
+          AND d.is_ai_drama = ?
+          AND d.tags IS NOT NULL AND d.tags != '[]'
+      `).all(dateFrom, dateTo, aiType) as { tags: string }[];
 
-    const tagCount = new Map<string, number>();
-    for (const row of tagDramas) {
-      try {
-        const tags: string[] = JSON.parse(row.tags);
-        for (const tag of tags) {
-          if (tag) tagCount.set(tag, (tagCount.get(tag) || 0) + 1);
-        }
-      } catch { /* skip */ }
+      const m = new Map<string, number>();
+      for (const row of rows) {
+        try {
+          for (const t of JSON.parse(row.tags) as string[]) {
+            if (t) m.set(t, (m.get(t) || 0) + 1);
+          }
+        } catch { /* skip */ }
+      }
+      return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([tag, count]) => ({ tag, count }));
     }
-    const tagDistribution = Array.from(tagCount.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([tag, count]) => ({ tag, count }));
+
+    const tagDistribution = {
+      ai_real: getTagsByType('ai_real'),
+      ai_comic: getTagsByType('ai_manga'),
+    };
+
+    // combined for backward compat
+    const allTags = new Map<string, number>();
+    for (const list of [tagDistribution.ai_real, tagDistribution.ai_comic]) {
+      for (const t of list) allTags.set(t.tag, (allTags.get(t.tag) || 0) + t.count);
+    }
+    const tagDistributionFlat = Array.from(allTags.entries())
+      .sort((a, b) => b[1] - a[1]).slice(0, 10).map(([tag, count]) => ({ tag, count }));
 
     // === Chart 4: Weekly heat growth by platform (last 8 weeks) ===
     const weeks = getRecentWeeks(latestDate, 8);
@@ -164,6 +174,39 @@ export async function GET(request: NextRequest) {
       return result;
     });
 
+    // === Heat growth Top5 (current 7d vs previous 7d) ===
+    const heatGrowthTop5 = db.prepare(`
+      SELECT d.title,
+        COALESCE(cur.heat, 0) as cur_heat,
+        COALESCE(prev.heat, 0) as prev_heat,
+        COALESCE(cur.heat, 0) - COALESCE(prev.heat, 0) as increment
+      FROM drama d
+      INNER JOIN (
+        SELECT playlet_id, MAX(heat_value) as heat
+        FROM ranking_snapshot
+        WHERE snapshot_date >= ? AND snapshot_date <= ?
+        GROUP BY playlet_id
+      ) cur ON d.playlet_id = cur.playlet_id
+      LEFT JOIN (
+        SELECT playlet_id, MAX(heat_value) as heat
+        FROM ranking_snapshot
+        WHERE snapshot_date >= ? AND snapshot_date < ?
+        GROUP BY playlet_id
+      ) prev ON d.playlet_id = prev.playlet_id
+      WHERE d.is_ai_drama IN ('ai_real', 'ai_manga')
+        AND COALESCE(prev.heat, 0) > 0
+      ORDER BY increment DESC
+      LIMIT 5
+    `).all(dateFrom, dateTo, getOffsetDate(dateFrom, -7), dateFrom) as {
+      title: string; cur_heat: number; prev_heat: number; increment: number;
+    }[];
+
+    const heatTop5 = heatGrowthTop5.map(r => ({
+      title: r.title,
+      growth_rate: r.prev_heat > 0 ? Math.round(((r.cur_heat - r.prev_heat) / r.prev_heat) * 100) : 0,
+      increment: r.increment,
+    }));
+
     return NextResponse.json({
       overview: {
         platformCount,
@@ -176,7 +219,9 @@ export async function GET(request: NextRequest) {
       platformAiCount,
       languageDistribution: langRows.map(r => ({ language: r.language, count: r.cnt })),
       tagDistribution,
+      tagDistributionFlat,
       weeklyHeatGrowth: weeklyData,
+      heatTop5,
       latestDate,
     });
   } catch (error: unknown) {

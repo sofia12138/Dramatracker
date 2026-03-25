@@ -95,8 +95,10 @@ export async function GET(request: NextRequest) {
         db, enriched.map(i => ({ playlet_id: i.playlet_id, platform }))
       );
 
-      const result = enriched.map(item => ({
+      const result = enriched.map((item, index) => ({
         ...item,
+        orig_rank: item.rank,
+        rank: index + 1,
         sparkline: sparklines.get(item.playlet_id) || [],
       }));
 

@@ -19,7 +19,7 @@ interface DramaRow {
 
 interface Toast { id: number; message: string; type: string }
 
-const PLATFORMS = ['ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel'];
+const PLATFORMS = ['ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
 
 function getWeekInfo(offset = 0): { week: string; label: string; start: string; end: string } {
   const now = new Date();

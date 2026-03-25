@@ -233,7 +233,7 @@ function buildWeeklyReportData(db: ReturnType<typeof getDb>): string {
   const weekStart = getWeekStart(latestDate);
   const prevWeekStart = getOffsetDate(weekStart, -7);
   const prevWeekEnd = getOffsetDate(weekStart, -1);
-  const PLATFORMS = ['ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel'];
+  const PLATFORMS = (db.prepare("SELECT name FROM platforms WHERE is_active = 1 ORDER BY id").all() as { name: string }[]).map(r => r.name);
 
   const getWeekTop = (start: string, end: string) => PLATFORMS.map(p => {
     const dramas = db.prepare(`

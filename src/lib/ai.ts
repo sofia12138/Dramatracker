@@ -20,17 +20,16 @@ function getConfig() {
 
 export function getAIClient(): OpenAI {
   const config = getConfig();
-  const apiKey = config.ai_api_key || config.bailianApiKey || '';
-  if (!apiKey) throw new Error('AI API Key 未配置，请在设置页面配置百炼 API Key');
+  const apiKey = process.env.BAILIAN_API_KEY || config.ai_api_key || config.bailianApiKey || '';
+  const baseURL = process.env.BAILIAN_BASE_URL || 'https://coding.dashscope.aliyuncs.com/v1';
 
-  return new OpenAI({
-    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    apiKey,
-  });
+  if (!apiKey) throw new Error('AI API Key 未配置，请在 .env.local 中设置 BAILIAN_API_KEY');
+
+  return new OpenAI({ baseURL, apiKey });
 }
 
 export function getAIModel(): string {
-  return 'qwen3.5-plus';
+  return process.env.BAILIAN_MODEL || 'qwen3.5-plus';
 }
 
 export function getSystemPrompt(): string {
