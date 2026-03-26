@@ -17,6 +17,14 @@ interface Drama {
   platforms_str: string;
 }
 
+interface ScrapeStatus {
+  auto_fetch_enabled: boolean;
+  auto_fetch_time: string;
+  last_auto_fetch_at?: string;
+  last_auto_fetch_success_at?: string;
+  last_auto_fetch_status?: string;
+}
+
 interface PlatformCount {
   platform: string;
   count: number;
@@ -68,6 +76,7 @@ export default function ReviewPage() {
   const [confirmInfo, setConfirmInfo] = useState<ConfirmInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [feishuSending, setFeishuSending] = useState(false);
+  const [scrapeStatus, setScrapeStatus] = useState<ScrapeStatus | null>(null);
   const toastId = useRef(0);
   const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
@@ -76,6 +85,19 @@ export default function ReviewPage() {
     setToasts(prev => [...prev, { id, message, type, undoAction }]);
     const timer = setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), undoAction ? 5000 : 3000);
     if (undoAction) undoTimers.current.set(id, timer);
+  }, []);
+
+  const fetchScrapeStatus = useCallback(() => {
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(data => setScrapeStatus({
+        auto_fetch_enabled: data.auto_fetch_enabled || false,
+        auto_fetch_time: data.auto_fetch_time || '09:00',
+        last_auto_fetch_at: data.last_auto_fetch_at,
+        last_auto_fetch_success_at: data.last_auto_fetch_success_at,
+        last_auto_fetch_status: data.last_auto_fetch_status,
+      }))
+      .catch(() => {});
   }, []);
 
   const fetchCounts = useCallback(() => {
@@ -105,7 +127,7 @@ export default function ReviewPage() {
       .catch(() => setLoading(false));
   }, [page, selectedPlatform]);
 
-  useEffect(() => { fetchCounts(); }, [fetchCounts]);
+  useEffect(() => { fetchCounts(); fetchScrapeStatus(); }, [fetchCounts, fetchScrapeStatus]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const selectType = (dramaId: number, type: string) => {
@@ -324,6 +346,91 @@ export default function ReviewPage() {
           {feishuSending ? '发送中...' : '飞书提醒'}
         </button>
       </div>
+
+      {/* Scrape Status Card */}
+      {scrapeStatus && (
+        <div className="card !py-3 !px-4">
+          <div className="flex items-center gap-6">
+            {/* Status */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-primary-text-muted whitespace-nowrap">抓取状态</span>
+              {scrapeStatus.last_auto_fetch_status === 'running' ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full bg-blue-50 text-blue-600 border border-blue-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />运行中
+                </span>
+              ) : scrapeStatus.last_auto_fetch_status === 'success' ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full bg-green-50 text-green-600 border border-green-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />成功
+                </span>
+              ) : scrapeStatus.last_auto_fetch_status === 'failed' ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full bg-red-50 text-red-600 border border-red-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />失败
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full bg-gray-50 text-gray-500 border border-gray-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />未执行
+                </span>
+              )}
+            </div>
+
+            <span className="w-px h-4 bg-primary-border/60" />
+
+            {/* Last run */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-primary-text-muted">上次执行</span>
+              <span className="text-primary-text">
+                {scrapeStatus.last_auto_fetch_at
+                  ? new Date(scrapeStatus.last_auto_fetch_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                  : '-'}
+              </span>
+            </div>
+
+            <span className="w-px h-4 bg-primary-border/60" />
+
+            {/* Last success */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-primary-text-muted">上次成功</span>
+              <span className="text-primary-text">
+                {scrapeStatus.last_auto_fetch_success_at
+                  ? new Date(scrapeStatus.last_auto_fetch_success_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                  : '-'}
+              </span>
+            </div>
+
+            <span className="w-px h-4 bg-primary-border/60" />
+
+            {/* Next run */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-primary-text-muted">下次执行</span>
+              <span className="text-primary-text">
+                {scrapeStatus.auto_fetch_enabled
+                  ? (() => {
+                      const now = new Date();
+                      const [h, m] = scrapeStatus.auto_fetch_time.split(':').map(Number);
+                      const t = new Date(now);
+                      t.setHours(h, m, 0, 0);
+                      if (t <= now) t.setDate(t.getDate() + 1);
+                      return t.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    })()
+                  : '未启用'}
+              </span>
+            </div>
+
+            {/* Action */}
+            <div className="ml-auto">
+              <button
+                onClick={() => fetchScrapeStatus()}
+                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-primary-text-secondary border border-primary-border rounded-md hover:bg-primary-sidebar transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                刷新状态
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Platform Tabs */}
       <div className="flex gap-1.5 overflow-x-auto pb-1">

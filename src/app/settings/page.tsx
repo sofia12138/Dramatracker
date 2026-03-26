@@ -18,9 +18,6 @@ interface Config {
   cookie_status: string;
   auto_fetch_enabled: boolean;
   auto_fetch_time: string;
-  last_auto_fetch_at?: string;
-  last_auto_fetch_success_at?: string;
-  last_auto_fetch_status?: string;
 }
 
 interface Stats {
@@ -405,43 +402,6 @@ export default function SettingsPage() {
           <div>
             <label className="block text-xs text-primary-text-secondary mb-1">下次执行</label>
             <p className="text-sm text-primary-text">{getNextRunTime()}</p>
-          </div>
-        </div>
-
-        {/* Auto fetch status */}
-        <div className="grid grid-cols-3 gap-3 pt-3 border-t border-primary-border/50">
-          <div>
-            <p className="text-xs text-primary-text-muted mb-1">上次执行</p>
-            <p className="text-sm text-primary-text">
-              {config?.last_auto_fetch_at
-                ? new Date(config.last_auto_fetch_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-                : '暂无'}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-primary-text-muted mb-1">上次成功</p>
-            <p className="text-sm text-primary-text">
-              {config?.last_auto_fetch_success_at
-                ? new Date(config.last_auto_fetch_success_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-                : '暂无'}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-primary-text-muted mb-1">执行状态</p>
-            {config?.last_auto_fetch_status === 'running' && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-blue-50 text-blue-600 border border-blue-200">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />执行中
-              </span>
-            )}
-            {config?.last_auto_fetch_status === 'success' && (
-              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-50 text-green-600 border border-green-200">成功</span>
-            )}
-            {config?.last_auto_fetch_status === 'failed' && (
-              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-50 text-red-600 border border-red-200">失败</span>
-            )}
-            {!config?.last_auto_fetch_status && (
-              <span className="text-sm text-primary-text-muted">暂无</span>
-            )}
           </div>
         </div>
       </div>
