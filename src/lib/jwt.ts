@@ -37,7 +37,7 @@ export function getTokenCookieOptions() {
   return {
     name: 'dt_token' as const,
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: false,
     sameSite: 'lax' as const,
     path: '/',
     maxAge: TOKEN_MAX_AGE,
