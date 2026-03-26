@@ -1,6 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
+interface RankingRow {
+  playlet_id: string;
+  platform: string;
+  rank: number;
+  heat_value: number;
+  material_count: number;
+  invest_days: number;
+  snapshot_date: string;
+  title: string;
+  description: string | null;
+  cover_url: string | null;
+  language: string | null;
+  is_ai_drama: string | null;
+  tags: string | null;
+  first_air_date: string | null;
+  creative_count: number | null;
+}
+
 function normalizeTitle(raw: unknown): string {
   return ((raw as string) || '')
     .replace(/\[Updating\]/gi, '')
@@ -104,19 +122,19 @@ export async function GET(request: NextRequest) {
         ORDER BY rank ASC
         LIMIT ?
       `;
-      const data = db.prepare(sql).all(...params, limit);
+      const data = db.prepare(sql).all(...params, limit) as RankingRow[];
 
       // Drama-level dedup: merge iOS/Android records (different playlet_id, same drama)
-      const dedupMap = new Map<string, Record<string, unknown>>();
-      for (const row of data as Record<string, unknown>[]) {
+      const dedupMap = new Map<string, RankingRow>();
+      for (const row of data) {
         const key = getDramaDedupeKey(row.title, row.language, row.first_air_date, row.platform);
         const existing = dedupMap.get(key);
-        if (!existing || (row.rank as number) < (existing.rank as number)) {
+        if (!existing || row.rank < existing.rank) {
           dedupMap.set(key, row);
         }
       }
       const dedupedRows = Array.from(dedupMap.values())
-        .sort((a, b) => (a.rank as number) - (b.rank as number));
+        .sort((a, b) => a.rank - b.rank);
 
       // Get previous period data for rank change
       // When accumulating data, always fall back to "previous snapshot day" comparison
@@ -124,13 +142,11 @@ export async function GET(request: NextRequest) {
       const prevData = getPreviousPeriodRanks(db, platform, isAiDrama, effectiveMode, latestDate, startDate, endDate);
 
       const enriched = dedupedRows.map((item) => {
-        const pid = item.playlet_id as string;
-        const prev = prevData.get(`${pid}:${item.platform}`);
+        const prev = prevData.get(`${item.playlet_id}:${item.platform}`);
         return {
           ...item,
-          playlet_id: pid,
           prev_rank: prev?.rank ?? null,
-          rank_change: prev ? (prev.rank as number) - (item.rank as number) : null,
+          rank_change: prev ? prev.rank - item.rank : null,
           is_new: !prev,
         };
       });
@@ -167,7 +183,7 @@ export async function GET(request: NextRequest) {
       WHERE ${whereClause}
       ORDER BY rs.heat_value DESC
     `;
-    const rawData = db.prepare(sql).all(...params) as Record<string, unknown>[];
+    const rawData = db.prepare(sql).all(...params) as RankingRow[];
 
     // Get heat values from previous period for increment calculation
     // When accumulating data, fall back to "previous snapshot day" for meaningful comparison
@@ -176,36 +192,33 @@ export async function GET(request: NextRequest) {
 
     // Deduplicate: keep the platform record with max heat increment for each drama
     const dramaMap = new Map<string, {
-      item: Record<string, unknown>;
+      item: RankingRow;
       platforms: { name: string; rank: number }[];
       heatIncrement: number;
       bestPlatform: string;
     }>();
 
     for (const row of rawData) {
-      const pid = row.playlet_id as string;
-      const plat = row.platform as string;
-      const curHeat = row.heat_value as number;
-      const prevHeat = prevHeatMap.get(`${pid}:${plat}`) || 0;
-      const increment = curHeat - prevHeat;
+      const prevHeat = prevHeatMap.get(`${row.playlet_id}:${row.platform}`) || 0;
+      const increment = row.heat_value - prevHeat;
 
       const dramaKey = getDramaDedupeKey(row.title, row.language, row.first_air_date);
       const existing = dramaMap.get(dramaKey);
       if (!existing) {
         dramaMap.set(dramaKey, {
           item: row,
-          platforms: [{ name: plat, rank: row.rank as number }],
+          platforms: [{ name: row.platform, rank: row.rank }],
           heatIncrement: increment,
-          bestPlatform: plat,
+          bestPlatform: row.platform,
         });
       } else {
-        if (!existing.platforms.some(p => p.name === plat)) {
-          existing.platforms.push({ name: plat, rank: row.rank as number });
+        if (!existing.platforms.some(p => p.name === row.platform)) {
+          existing.platforms.push({ name: row.platform, rank: row.rank });
         }
         if (increment > existing.heatIncrement) {
           existing.heatIncrement = increment;
           existing.item = row;
-          existing.bestPlatform = plat;
+          existing.bestPlatform = row.platform;
         }
       }
     }
@@ -218,13 +231,12 @@ export async function GET(request: NextRequest) {
     const prevRankMap = getPreviousPeriodOverallRanks(db, isAiDrama, effectiveMode, latestDate, startDate, endDate);
 
     const sparklines = getInvestTrendSparklines(
-      db, sorted.map(e => ({ playlet_id: e.item.playlet_id as string, platform: e.bestPlatform }))
+      db, sorted.map(e => ({ playlet_id: e.item.playlet_id, platform: e.bestPlatform }))
     );
 
     const result = sorted.map((entry, index) => {
       const newRank = index + 1;
-      const pid = entry.item.playlet_id as string;
-      const prevRank = prevRankMap.get(pid);
+      const prevRank = prevRankMap.get(entry.item.playlet_id);
       return {
         ...entry.item,
         rank: newRank,
@@ -235,7 +247,7 @@ export async function GET(request: NextRequest) {
         heat_increment: entry.heatIncrement,
         platforms_list: entry.platforms,
         best_platform: entry.bestPlatform,
-        sparkline: sparklines.get(pid) || [],
+        sparkline: sparklines.get(entry.item.playlet_id) || [],
       };
     });
 
