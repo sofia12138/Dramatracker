@@ -18,6 +18,21 @@ function updateConfigField(field: string, value: string) {
   }
 }
 
+async function triggerReviewAlert(log: (msg: string) => void) {
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    const res = await fetch(`${baseUrl}/api/notify/review-alert`, { method: 'POST' });
+    const data = await res.json();
+    if (data.notified) {
+      log(`[通知] 飞书审核提醒已发送（${data.count}条待审核）\n`);
+    } else {
+      log('[通知] 无待审核剧集，未发送飞书通知\n');
+    }
+  } catch (e) {
+    log(`[通知] 飞书通知发送失败: ${e instanceof Error ? e.message : e}\n`);
+  }
+}
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -91,11 +106,12 @@ export async function POST(request: NextRequest) {
         finish(-1);
       });
 
-      child.on('close', (code) => {
+      child.on('close', async (code) => {
         send(`\n[系统] 脚本执行完毕，退出码: ${code}\n`);
         if (code === 0) {
           updateConfigField('last_auto_fetch_success_at', new Date().toISOString());
           updateConfigField('last_auto_fetch_status', 'success');
+          await triggerReviewAlert(send);
         } else {
           updateConfigField('last_auto_fetch_status', 'failed');
         }

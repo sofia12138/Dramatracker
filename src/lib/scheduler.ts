@@ -5,6 +5,28 @@ import path from 'path';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
 let started = false;
+let lastNotifyDate = '';
+
+async function triggerReviewAlert() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (lastNotifyDate === today) {
+    console.log('[auto-scrape] 今日已发送过飞书通知，跳过');
+    return;
+  }
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    const res = await fetch(`${baseUrl}/api/notify/review-alert`, { method: 'POST' });
+    const data = await res.json();
+    if (data.notified) {
+      console.log(`[auto-scrape] 飞书审核通知已发送（${data.count}条待审核）`);
+      lastNotifyDate = today;
+    } else {
+      console.log('[auto-scrape] 无待审核剧集，未发送飞书通知');
+    }
+  } catch (e) {
+    console.error(`[auto-scrape] 飞书通知发送失败: ${e}`);
+  }
+}
 
 function readConfig(): { auto_fetch_enabled: boolean; auto_fetch_time: string } {
   try {
@@ -64,6 +86,7 @@ function runScraper() {
     if (code === 0) {
       updateConfigField('last_auto_fetch_success_at', new Date().toISOString());
       updateConfigField('last_auto_fetch_status', 'success');
+      triggerReviewAlert();
     } else {
       updateConfigField('last_auto_fetch_status', 'failed');
     }
