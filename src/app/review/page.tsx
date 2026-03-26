@@ -55,10 +55,6 @@ function formatHeat(val: number): string {
   return val.toLocaleString();
 }
 
-function parseTags(tags: string): string[] {
-  try { return JSON.parse(tags || '[]'); } catch { return []; }
-}
-
 const TYPE_LABELS: Record<string, string> = {
   ai_real: 'AI真人剧',
   ai_manga: 'AI漫剧',
@@ -748,7 +744,6 @@ export default function ReviewPage() {
           {/* Card Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {dramas.map(drama => {
-              const tags = parseTags(drama.tags);
               const platforms = drama.platforms_str ? drama.platforms_str.split(',') : [];
               const isFading = fadingOut.has(drama.id);
               const isSelected = selectedIds.has(drama.id);

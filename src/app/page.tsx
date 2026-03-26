@@ -28,9 +28,6 @@ interface HotSummaryData {
 
 echarts.use([BarChart, PieChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer]);
 
-const FALLBACK_PLATFORMS = ['ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
-const PLATFORM_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#a855f7'];
-
 interface DashboardData {
   overview: {
     platformCount: number;
@@ -203,71 +200,6 @@ export default function DashboardPage() {
         itemStyle: { color: ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#84cc16', '#a855f7'][i % 12] },
       })),
     }],
-  };
-
-  // Chart 3: Tag horizontal bar chart (uses flat for chart compat)
-  const sortedTags = data?.tagDistributionFlat || [];
-  const chart3Option = {
-    tooltip: { trigger: 'axis' as const },
-    grid: { left: 100, right: 30, top: 10, bottom: 20 },
-    xAxis: {
-      type: 'value' as const,
-      axisLabel: { fontSize: 10, color: '#9ca3af' },
-      splitLine: { lineStyle: { color: '#e8ecf5' } },
-    },
-    yAxis: {
-      type: 'category' as const,
-      data: [...sortedTags].reverse().map(t => t.tag),
-      axisLabel: { fontSize: 11, color: '#6b7280', width: 80, overflow: 'truncate' as const },
-      axisLine: { lineStyle: { color: '#d0d5e0' } },
-    },
-    series: [{
-      type: 'bar',
-      data: [...sortedTags].reverse().map(t => t.count),
-      itemStyle: {
-        borderRadius: [0, 4, 4, 0],
-        color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
-          { offset: 0, color: '#3b5bdb' },
-          { offset: 1, color: '#7c8cf5' },
-        ]),
-      },
-      barWidth: 18,
-    }],
-  };
-
-  // Chart 4: Weekly heat growth line chart
-  const weeklyData = data?.weeklyHeatGrowth || [];
-  const chart4Option = {
-    tooltip: {
-      trigger: 'axis' as const,
-      valueFormatter: (v: number) => formatHeat(v),
-    },
-    legend: {
-      data: FALLBACK_PLATFORMS, top: 0, type: 'scroll' as const,
-      textStyle: { color: '#6b7280', fontSize: 10 },
-    },
-    grid: { left: 60, right: 20, top: 40, bottom: 30 },
-    xAxis: {
-      type: 'category' as const,
-      data: weeklyData.map(w => w.week as string),
-      axisLabel: { fontSize: 10, color: '#6b7280' },
-      axisLine: { lineStyle: { color: '#d0d5e0' } },
-    },
-    yAxis: {
-      type: 'value' as const,
-      axisLabel: {
-        fontSize: 10, color: '#9ca3af',
-        formatter: (v: number) => formatHeat(v),
-      },
-      splitLine: { lineStyle: { color: '#e8ecf5' } },
-    },
-    series: FALLBACK_PLATFORMS.map((p, i) => ({
-      name: p, type: 'line', smooth: true,
-      data: weeklyData.map(w => (w[p] as number) || 0),
-      lineStyle: { width: 2 },
-      symbol: 'circle', symbolSize: 5,
-      itemStyle: { color: PLATFORM_COLORS[i] },
-    })),
   };
 
   return (

@@ -200,7 +200,7 @@ export default function CompetitorAnalysisPanel({ type, onClose }: Props) {
 
       {!data && !loading && !error && (
         <div className="text-center py-8 text-primary-text-muted text-sm">
-          点击"开始分析"，AI 将识别 Top20 竞品的增长模式
+          点击&quot;开始分析&quot;，AI 将识别 Top20 竞品的增长模式
         </div>
       )}
     </div>

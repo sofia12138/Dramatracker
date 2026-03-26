@@ -1,8 +1,6 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-
 
 interface Platform {
   id: number;
@@ -70,7 +68,6 @@ export default function SettingsPage() {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const { hasPermission } = useAuth();
 
   // Toast
   const [toasts, setToasts] = useState<Toast[]>([]);
