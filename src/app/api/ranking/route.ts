@@ -124,9 +124,11 @@ export async function GET(request: NextRequest) {
       const prevData = getPreviousPeriodRanks(db, platform, isAiDrama, effectiveMode, latestDate, startDate, endDate);
 
       const enriched = dedupedRows.map((item) => {
-        const prev = prevData.get(`${item.playlet_id}:${item.platform}`);
+        const pid = item.playlet_id as string;
+        const prev = prevData.get(`${pid}:${item.platform}`);
         return {
           ...item,
+          playlet_id: pid,
           prev_rank: prev?.rank ?? null,
           rank_change: prev ? (prev.rank as number) - (item.rank as number) : null,
           is_new: !prev,
