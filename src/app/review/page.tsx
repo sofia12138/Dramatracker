@@ -67,6 +67,7 @@ export default function ReviewPage() {
   const [pendingType, setPendingType] = useState<Map<number, string>>(new Map());
   const [confirmInfo, setConfirmInfo] = useState<ConfirmInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [feishuSending, setFeishuSending] = useState(false);
   const toastId = useRef(0);
   const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
@@ -300,6 +301,28 @@ export default function ReviewPage() {
             待审核：{total}部
           </span>
         </div>
+        <button
+          disabled={feishuSending}
+          onClick={async () => {
+            setFeishuSending(true);
+            try {
+              const res = await fetch('/api/notify/review-alert', { method: 'POST' });
+              const data = await res.json();
+              if (!res.ok) { showToast(data.error || '发送失败', 'error'); return; }
+              showToast(data.notified ? `飞书提醒已发送（${data.count}条待审核）` : '当前没有待审核短剧，无需提醒');
+            } catch { showToast('网络异常，请重试', 'error'); }
+            finally { setFeishuSending(false); }
+          }}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-primary-border bg-white text-primary-text-secondary hover:text-primary-accent hover:border-primary-accent transition-colors disabled:opacity-50"
+        >
+          <svg className={`w-3.5 h-3.5 ${feishuSending ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            {feishuSending
+              ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            }
+          </svg>
+          {feishuSending ? '发送中...' : '飞书提醒'}
+        </button>
       </div>
 
       {/* Platform Tabs */}
