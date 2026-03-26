@@ -41,6 +41,7 @@ const PLATFORM_LABELS: Record<string, string> = { all: '总榜' };
 const LANGUAGES = ['全部', 'English', 'Spanish', 'Portuguese', 'French', 'Indonesian', 'German'];
 const TIME_MODES = [
   { key: 'today', label: '今天' },
+  { key: 'yesterday', label: '昨天' },
   { key: '7days', label: '近7天' },
   { key: '30days', label: '近30天' },
   { key: 'custom', label: '自定义' },
@@ -297,7 +298,7 @@ export default function RankingTable({ type, title }: Props) {
             <svg className="w-12 h-12 mx-auto mb-3 text-primary-text-muted/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6m6 0h6m-6 0V9a2 2 0 012-2h2a2 2 0 012 2v10m6 0v-4a2 2 0 00-2-2h-2a2 2 0 00-2 2v4" />
             </svg>
-            暂无榜单数据
+            {timeMode === 'yesterday' ? '暂无昨日数据' : '暂无榜单数据'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -497,7 +498,7 @@ export default function RankingTable({ type, title }: Props) {
         {!loading && data.length > 0 && (
           <div className="px-4 py-3 border-t border-primary-border/50 bg-primary-sidebar/30 flex items-center justify-between">
             <span className="text-xs text-primary-text-muted">
-              {isOverall ? '总榜' : selectedPlatform} · {latestDate ? `数据日期 ${latestDate}` : ''} · 共 {data.length} 条
+              {isOverall ? '总榜' : selectedPlatform} · {latestDate ? `数据日期 ${latestDate}${timeMode === 'yesterday' ? '（昨日）' : timeMode === 'today' ? '（今日）' : ''}` : ''} · 共 {data.length} 条
             </span>
             <span className="text-xs text-primary-text-muted">
               {isOverall ? '按热力增量排序，同剧取最佳平台' : `Top ${Math.min(20, data.length)}`}

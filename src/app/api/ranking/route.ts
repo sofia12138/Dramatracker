@@ -23,13 +23,16 @@ export async function GET(request: NextRequest) {
     const snapshotDays = distinctDaysRow?.cnt || 0;
 
     const requiredDays = mode === '7days' ? 7 : mode === '30days' ? 30 : 1;
-    const dataAccumulating = snapshotDays < requiredDays && mode !== 'today' && mode !== 'custom';
+    const dataAccumulating = snapshotDays < requiredDays && mode !== 'today' && mode !== 'yesterday' && mode !== 'custom';
 
     let dateFilter = '';
     const params: unknown[] = [];
 
     if (mode === 'today') {
       dateFilter = 'rs.snapshot_date = ?';
+      params.push(latestDate);
+    } else if (mode === 'yesterday') {
+      dateFilter = "rs.snapshot_date = date(?, '-1 day')";
       params.push(latestDate);
     } else if (mode === '7days') {
       dateFilter = "rs.snapshot_date >= date(?, '-6 days') AND rs.snapshot_date <= ?";
@@ -215,6 +218,9 @@ function getPreviousPeriodRanks(
   if (mode === 'today') {
     prevDateFilter = 'rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < ?)';
     params.push(latestDate);
+  } else if (mode === 'yesterday') {
+    prevDateFilter = "rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < date(?, '-1 day'))";
+    params.push(latestDate);
   } else if (mode === '7days') {
     prevDateFilter = "rs.snapshot_date >= date(?, '-13 days') AND rs.snapshot_date < date(?, '-6 days')";
     params.push(latestDate, latestDate);
@@ -270,6 +276,9 @@ function getPreviousHeatValues(
 
   if (mode === 'today') {
     prevDateFilter = 'rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < ?)';
+    params.push(latestDate);
+  } else if (mode === 'yesterday') {
+    prevDateFilter = "rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < date(?, '-1 day'))";
     params.push(latestDate);
   } else if (mode === '7days') {
     prevDateFilter = "rs.snapshot_date >= date(?, '-13 days') AND rs.snapshot_date < date(?, '-6 days')";
