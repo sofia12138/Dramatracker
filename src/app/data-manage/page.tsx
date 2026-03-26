@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { apiFetch } from '@/lib/fetch';
 
 interface Drama {
   id: number;
@@ -50,7 +51,7 @@ export default function DataManagePage() {
     if (search) params.set('search', search);
     if (typeFilter) params.set('is_ai_drama', typeFilter);
 
-    fetch(`/api/drama?${params}`)
+    apiFetch(`/api/drama?${params}`)
       .then(r => r.json())
       .then(result => {
         setDramas(result.data || []);
@@ -75,13 +76,13 @@ export default function DataManagePage() {
       const body = { ...form, tags, is_ai_drama: form.is_ai_drama || null };
 
       if (editingDrama) {
-        await fetch(`/api/drama/${editingDrama.id}`, {
+        await apiFetch(`/api/drama/${editingDrama.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
       } else {
-        await fetch('/api/drama', {
+        await apiFetch('/api/drama', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -114,7 +115,7 @@ export default function DataManagePage() {
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定要删除此剧集吗？')) return;
-    await fetch(`/api/drama/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/drama/${id}`, { method: 'DELETE' });
     fetchData();
   };
 

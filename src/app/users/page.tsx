@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { apiFetch } from '@/lib/fetch';
 
 interface User {
   id: number;
@@ -59,7 +60,7 @@ export default function UsersPage() {
 
   const fetchUsers = useCallback(() => {
     setLoading(true);
-    fetch('/api/users')
+    apiFetch('/api/users')
       .then(r => {
         if (r.status === 403) throw new Error('无权限');
         return r.json();
@@ -74,7 +75,7 @@ export default function UsersPage() {
     e.preventDefault();
     try {
       if (editingUser) {
-        const res = await fetch(`/api/users/${editingUser.id}`, {
+        const res = await apiFetch(`/api/users/${editingUser.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
@@ -82,7 +83,7 @@ export default function UsersPage() {
         if (!res.ok) { showToast('更新失败', 'error'); return; }
         showToast('用户已更新');
       } else {
-        const res = await fetch('/api/users', {
+        const res = await apiFetch('/api/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
@@ -113,14 +114,14 @@ export default function UsersPage() {
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定要删除此用户吗？')) return;
-    const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`/api/users/${id}`, { method: 'DELETE' });
     if (res.ok) { showToast('用户已删除'); fetchUsers(); }
     else showToast('删除失败', 'error');
   };
 
   const handleToggleActive = async (user: User) => {
     const newStatus = user.is_active ? 0 : 1;
-    const res = await fetch(`/api/users/${user.id}`, {
+    const res = await apiFetch(`/api/users/${user.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...user, is_active: newStatus }),
@@ -133,7 +134,7 @@ export default function UsersPage() {
 
   const handleResetPassword = async () => {
     if (!resetPasswordId || !newPassword) return;
-    const res = await fetch(`/api/users/${resetPasswordId}`, {
+    const res = await apiFetch(`/api/users/${resetPasswordId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: newPassword }),

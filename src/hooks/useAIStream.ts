@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
+import { apiFetch } from '@/lib/fetch';
 
 interface UseAIStreamOptions {
   onDone?: (content: string) => void;
@@ -23,7 +24,7 @@ export function useAIStream(options?: UseAIStreamOptions) {
     abortRef.current = controller;
 
     try {
-      const res = await fetch('/api/ai/analyze', {
+      const res = await apiFetch('/api/ai/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, params, noCache }),

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { apiFetch } from '@/lib/fetch';
 
 interface Platform {
   id: number;
@@ -83,9 +84,9 @@ export default function SettingsPage() {
     setLoading(true);
     try {
       const [configRes, platformsRes, statsRes] = await Promise.all([
-        fetch('/api/config').then(r => r.json()),
-        fetch('/api/platforms').then(r => r.json()),
-        fetch('/api/settings/stats').then(r => r.json()),
+        apiFetch('/api/config').then(r => r.json()),
+        apiFetch('/api/platforms').then(r => r.json()),
+        apiFetch('/api/settings/stats').then(r => r.json()),
       ]);
       setConfig(configRes);
       setCookieText(configRes.cookie || '');
@@ -103,13 +104,13 @@ export default function SettingsPage() {
   const handleSaveCookie = async () => {
     setSavingCookie(true);
     try {
-      await fetch('/api/config', {
+      await apiFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cookie: cookieText }),
       });
       showToast('Cookie 已保存');
-      const res = await fetch('/api/config').then(r => r.json());
+      const res = await apiFetch('/api/config').then(r => r.json());
       setConfig(res);
     } catch { showToast('保存失败', 'error'); }
     setSavingCookie(false);
@@ -118,7 +119,7 @@ export default function SettingsPage() {
   // --- Auto Fetch ---
   const handleAutoFetchChange = async (enabled: boolean) => {
     setAutoFetchEnabled(enabled);
-    await fetch('/api/config', {
+    await apiFetch('/api/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ auto_fetch_enabled: enabled }),
@@ -128,7 +129,7 @@ export default function SettingsPage() {
 
   const handleAutoFetchTimeChange = async (time: string) => {
     setAutoFetchTime(time);
-    await fetch('/api/config', {
+    await apiFetch('/api/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ auto_fetch_time: time }),
@@ -146,7 +147,7 @@ export default function SettingsPage() {
     };
 
     try {
-      const res = await fetch('/api/scraper/run', {
+      const res = await apiFetch('/api/scraper/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ backfill }),
@@ -208,12 +209,12 @@ export default function SettingsPage() {
     const body = { name: platformForm.name, product_ids: productIds, is_active: 1 };
 
     if (editingPlatform) {
-      await fetch(`/api/platforms/${editingPlatform.id}`, {
+      await apiFetch(`/api/platforms/${editingPlatform.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       showToast('平台已更新');
     } else {
-      await fetch('/api/platforms', {
+      await apiFetch('/api/platforms', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       showToast('平台已添加');
@@ -221,27 +222,27 @@ export default function SettingsPage() {
     setShowPlatformForm(false);
     setEditingPlatform(null);
     setPlatformForm({ name: '', android_id: '', ios_id: '' });
-    const res = await fetch('/api/platforms').then(r => r.json());
+    const res = await apiFetch('/api/platforms').then(r => r.json());
     setPlatforms(res);
   };
 
   const handleTogglePlatform = async (platform: Platform) => {
     const newActive = platform.is_active ? 0 : 1;
-    await fetch(`/api/platforms/${platform.id}`, {
+    await apiFetch(`/api/platforms/${platform.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: platform.name, product_ids: parseProductIds(platform.product_ids), is_active: newActive }),
     });
     showToast(newActive ? `${platform.name} 已启用` : `${platform.name} 已停用`);
-    const res = await fetch('/api/platforms').then(r => r.json());
+    const res = await apiFetch('/api/platforms').then(r => r.json());
     setPlatforms(res);
   };
 
   const handleDeletePlatform = async (id: number) => {
-    await fetch(`/api/platforms/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/platforms/${id}`, { method: 'DELETE' });
     showToast('平台已删除');
     setConfirmDelete(null);
-    const res = await fetch('/api/platforms').then(r => r.json());
+    const res = await apiFetch('/api/platforms').then(r => r.json());
     setPlatforms(res);
   };
 
@@ -254,10 +255,10 @@ export default function SettingsPage() {
 
   // --- Clear Data ---
   const handleClearData = async () => {
-    await fetch('/api/settings/stats', { method: 'DELETE' });
+    await apiFetch('/api/settings/stats', { method: 'DELETE' });
     showToast('历史数据已清空');
     setConfirmClear(false);
-    const res = await fetch('/api/settings/stats').then(r => r.json());
+    const res = await apiFetch('/api/settings/stats').then(r => r.json());
     setStats(res);
   };
 
@@ -336,7 +337,7 @@ export default function SettingsPage() {
               onClick={async () => {
                 setCookieCheckResult({ status: 'checking', message: '检测中...' });
                 try {
-                  const res = await fetch('/api/config/check-cookie', { method: 'POST' });
+                  const res = await apiFetch('/api/config/check-cookie', { method: 'POST' });
                   const data = await res.json();
                   setCookieCheckResult(data);
                 } catch {

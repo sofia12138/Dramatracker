@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { apiFetch } from '@/lib/fetch';
 
 export interface AuthUser {
   id: number;
@@ -30,7 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const fetchMe = useCallback(async () => {
     try {
-      const res = await fetch('/api/auth/me');
+      const res = await apiFetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
         setUser(data);
@@ -56,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [pathname, fetchMe]);
 
   const login = useCallback(async (username: string, password: string) => {
-    const res = await fetch('/api/auth/login', {
+    const res = await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
@@ -71,7 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [fetchMe]);
 
   const logout = useCallback(async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    await apiFetch('/api/auth/logout', { method: 'POST' });
     setUser(null);
     router.replace('/login');
   }, [router]);

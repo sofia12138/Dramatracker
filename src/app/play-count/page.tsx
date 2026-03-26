@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { apiFetch } from '@/lib/fetch';
 
 interface DramaRow {
   drama_id: number;
@@ -76,7 +77,7 @@ export default function PlayCountPage() {
     setLoading(true);
     const params = new URLSearchParams({ record_week: weekInfo.week });
     if (selectedPlatform) params.set('platform', selectedPlatform);
-    fetch(`/api/play-count?${params}`)
+    apiFetch(`/api/play-count?${params}`)
       .then(r => r.json())
       .then(result => {
         setRows(result.data || []);
@@ -100,7 +101,7 @@ export default function PlayCountPage() {
 
     setSaving(true);
     try {
-      const res = await fetch('/api/play-count', {
+      const res = await apiFetch('/api/play-count', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -141,7 +142,7 @@ export default function PlayCountPage() {
 
     setSaving(true);
     try {
-      const res = await fetch('/api/play-count', {
+      const res = await apiFetch('/api/play-count', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(items),

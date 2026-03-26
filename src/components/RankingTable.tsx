@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Sparkline from './Sparkline';
 import DetailDrawer from './DetailDrawer';
 import CompetitorAnalysisPanel from './CompetitorAnalysisPanel';
+import { apiFetch } from '@/lib/fetch';
 
 interface RankingItem {
   playlet_id: string;
@@ -129,7 +130,7 @@ export default function RankingTable({ type, title }: Props) {
   const [platforms, setPlatforms] = useState<string[]>(FALLBACK_PLATFORMS);
 
   useEffect(() => {
-    fetch('/api/platforms')
+    apiFetch('/api/platforms')
       .then(r => r.json())
       .then((list: { name: string; is_active: number }[]) => {
         const active = list.filter(p => p.is_active).map(p => p.name);
@@ -157,7 +158,7 @@ export default function RankingTable({ type, title }: Props) {
     }
 
     try {
-      const res = await fetch(`/api/ranking?${params}`);
+      const res = await apiFetch(`/api/ranking?${params}`);
       const result = await res.json();
       let items: RankingItem[] = result.data || [];
 

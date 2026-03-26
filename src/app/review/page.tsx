@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { apiFetch } from '@/lib/fetch';
 
 interface Drama {
   id: number;
@@ -132,7 +133,7 @@ export default function ReviewPage() {
   }, []);
 
   const fetchScrapeStatus = useCallback(() => {
-    fetch('/api/config')
+    apiFetch('/api/config')
       .then(r => r.json())
       .then(data => setScrapeStatus({
         auto_fetch_enabled: data.auto_fetch_enabled || false,
@@ -145,7 +146,7 @@ export default function ReviewPage() {
   }, []);
 
   const fetchCounts = useCallback(() => {
-    fetch('/api/drama/pending-count')
+    apiFetch('/api/drama/pending-count')
       .then(r => r.json())
       .then(data => {
         setTotal(data.count || 0);
@@ -162,7 +163,7 @@ export default function ReviewPage() {
     });
     if (selectedPlatform) params.set('platform', selectedPlatform);
 
-    fetch(`/api/drama/review?${params}`)
+    apiFetch(`/api/drama/review?${params}`)
       .then(r => r.json())
       .then(result => {
         setDramas(result.data || []);
@@ -176,7 +177,7 @@ export default function ReviewPage() {
     setScraping(true);
     showToast('抓取任务已启动');
     try {
-      const res = await fetch('/api/scraper/run', { method: 'POST' });
+      const res = await apiFetch('/api/scraper/run', { method: 'POST' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         showToast(data.error || '启动失败', 'error');
@@ -239,7 +240,7 @@ export default function ReviewPage() {
     setFadingOut(prev => new Set(prev).add(dramaId));
 
     try {
-      await fetch(`/api/drama/${dramaId}`, {
+      await apiFetch(`/api/drama/${dramaId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_ai_drama: type }),
@@ -248,7 +249,7 @@ export default function ReviewPage() {
       const drama = dramas.find(d => d.id === dramaId);
 
       const undoAction = async () => {
-        await fetch(`/api/drama/${dramaId}`, {
+        await apiFetch(`/api/drama/${dramaId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ is_ai_drama: null }),
@@ -284,7 +285,7 @@ export default function ReviewPage() {
     ids.forEach(id => setFadingOut(prev => new Set(prev).add(id)));
 
     try {
-      const res = await fetch('/api/drama/review', {
+      const res = await apiFetch('/api/drama/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids, is_ai_drama: type }),
@@ -345,7 +346,7 @@ export default function ReviewPage() {
     if (editingGenre === null) return;
     setSavingGenre(true);
     try {
-      const res = await fetch('/api/drama/genre', {
+      const res = await apiFetch('/api/drama/genre', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ drama_id: editingGenre, genre_tags_manual: Array.from(genreSelection) }),
@@ -368,7 +369,7 @@ export default function ReviewPage() {
   const handleAiGenre = async () => {
     setAiGenreRunning(true);
     try {
-      const res = await fetch('/api/drama/genre', {
+      const res = await apiFetch('/api/drama/genre', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -528,7 +529,7 @@ export default function ReviewPage() {
           onClick={async () => {
             setFeishuSending(true);
             try {
-              const res = await fetch('/api/notify/review-alert', { method: 'POST' });
+              const res = await apiFetch('/api/notify/review-alert', { method: 'POST' });
               const data = await res.json();
               if (!res.ok) { showToast(data.error || '发送失败', 'error'); return; }
               showToast(data.notified ? `飞书提醒已发送（${data.count}条待审核）` : '当前没有待审核短剧，无需提醒');

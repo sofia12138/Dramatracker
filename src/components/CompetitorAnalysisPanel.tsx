@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { apiFetch } from '@/lib/fetch';
 
 interface AnalysisItem {
   title: string;
@@ -61,7 +62,7 @@ export default function CompetitorAnalysisPanel({ type, onClose }: Props) {
     setError('');
     setData(null);
     try {
-      const res = await fetch(`/api/ai/competitor-analysis?type=${type}`, { method: 'POST' });
+      const res = await apiFetch(`/api/ai/competitor-analysis?type=${type}`, { method: 'POST' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '请求失败');
       setData(json.data);

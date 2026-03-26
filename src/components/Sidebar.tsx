@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { apiFetch } from '@/lib/fetch';
 
 const ROLE_LABELS: Record<string, string> = {
   super_admin: '超级管理员',
@@ -125,7 +126,7 @@ export default function Sidebar() {
   const [pendingCount, setPendingCount] = useState(0);
 
   const refreshCount = () => {
-    fetch('/api/drama/pending-count')
+    apiFetch('/api/drama/pending-count')
       .then(res => res.json())
       .then(data => setPendingCount(data.count || 0))
       .catch(() => {});

@@ -10,6 +10,7 @@ import {
 import { CanvasRenderer } from 'echarts/renderers';
 import { useAuth } from '@/contexts/AuthContext';
 import AIInsightDrawer from '@/components/AIInsightDrawer';
+import { apiFetch } from '@/lib/fetch';
 
 interface HotCategoryAnalysis {
   dominant_pattern: string;
@@ -81,7 +82,7 @@ export default function DashboardPage() {
     setHotError('');
     setHotData(null);
     try {
-      const res = await fetch('/api/ai/hot-summary', { method: 'POST' });
+      const res = await apiFetch('/api/ai/hot-summary', { method: 'POST' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '请求失败');
       setHotData(json.data);
@@ -97,7 +98,7 @@ export default function DashboardPage() {
     setInsightError('');
     setInsightData(null);
     try {
-      const res = await fetch('/api/ai/insight', { method: 'POST' });
+      const res = await apiFetch('/api/ai/insight', { method: 'POST' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || '请求失败');
       setInsightData(json.data);
@@ -115,7 +116,7 @@ export default function DashboardPage() {
       params.set('start_date', sd);
       params.set('end_date', ed);
     }
-    fetch(`/api/dashboard/stats?${params}`)
+    apiFetch(`/api/dashboard/stats?${params}`)
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false); })
       .catch(() => setLoading(false));

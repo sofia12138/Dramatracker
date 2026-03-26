@@ -5,6 +5,7 @@ import * as echarts from 'echarts';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAIStream } from '@/hooks/useAIStream';
 import AIMarkdown from './AIMarkdown';
+import { apiFetch } from '@/lib/fetch';
 
 interface Drama {
   id: number;
@@ -59,7 +60,7 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
   useEffect(() => {
     if (!playletId) return;
     setLoading(true);
-    fetch(`/api/ranking/detail?playlet_id=${playletId}`)
+    apiFetch(`/api/ranking/detail?playlet_id=${playletId}`)
       .then(r => r.json())
       .then(d => {
         setData(d);
@@ -68,7 +69,7 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
       })
       .catch(() => setLoading(false));
 
-    fetch(`/api/play-count?mode=chart&playlet_id=${playletId}`)
+    apiFetch(`/api/play-count?mode=chart&playlet_id=${playletId}`)
       .then(r => r.json())
       .then(d => setPlayCountData(Array.isArray(d) ? d : []))
       .catch(() => setPlayCountData([]));
@@ -212,7 +213,7 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
 
   const handleSaveDesc = async () => {
     if (!data?.drama) return;
-    await fetch(`/api/drama/${data.drama.id}`, {
+    await apiFetch(`/api/drama/${data.drama.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description: descText }),
