@@ -62,6 +62,37 @@ const TYPE_LABELS: Record<string, string> = {
   real: '真人剧',
 };
 
+function getScrapeStatusConfig(status?: string) {
+  switch (status) {
+    case 'running': return { label: '正在抓取数据', dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-600 border-blue-200', border: 'border-blue-200', bg: 'bg-blue-50/40' };
+    case 'success': return { label: '今日抓取成功', dot: 'bg-green-500', badge: 'bg-green-50 text-green-600 border-green-200', border: 'border-green-200', bg: 'bg-green-50/40' };
+    case 'failed':  return { label: '抓取失败', dot: 'bg-red-500', badge: 'bg-red-50 text-red-600 border-red-200', border: 'border-red-200', bg: 'bg-red-50/40' };
+    default:        return { label: '今日尚未抓取', dot: 'bg-gray-400', badge: 'bg-gray-50 text-gray-500 border-gray-200', border: 'border-primary-border', bg: 'bg-primary-bg' };
+  }
+}
+
+function getReviewEmptyState(status?: string) {
+  if (status === 'failed') return { emoji: '⚠️', title: '暂无数据', sub: '抓取失败，请重试后再审核', showAction: true };
+  if (!status || status === 'idle') return { emoji: '📡', title: '暂无数据', sub: '请先执行抓取以生成待审核剧集', showAction: true };
+  if (status === 'running') return { emoji: '⏳', title: '暂无数据', sub: '数据抓取中，完成后将自动刷新', showAction: false };
+  return { emoji: '🎉', title: '暂无待审核剧集', sub: '所有剧集已审核完毕', showAction: false };
+}
+
+function formatShortTime(dateStr?: string) {
+  if (!dateStr) return null;
+  return new Date(dateStr).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function getNextRunTime(enabled: boolean, time: string) {
+  if (!enabled) return null;
+  const now = new Date();
+  const [h, m] = time.split(':').map(Number);
+  const t = new Date(now);
+  t.setHours(h, m, 0, 0);
+  if (t <= now) t.setDate(t.getDate() + 1);
+  return t.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
 export default function ReviewPage() {
   const [dramas, setDramas] = useState<Drama[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,6 +108,7 @@ export default function ReviewPage() {
   const [submitting, setSubmitting] = useState(false);
   const [feishuSending, setFeishuSending] = useState(false);
   const [scrapeStatus, setScrapeStatus] = useState<ScrapeStatus | null>(null);
+  const [scraping, setScraping] = useState(false);
   const toastId = useRef(0);
   const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
@@ -126,6 +158,49 @@ export default function ReviewPage() {
       })
       .catch(() => setLoading(false));
   }, [page, selectedPlatform]);
+
+  const handleRunScraper = useCallback(async () => {
+    if (scraping) return;
+    setScraping(true);
+    showToast('抓取任务已启动');
+    try {
+      const res = await fetch('/api/scraper/run', { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || '启动失败', 'error');
+        setScraping(false);
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (reader) {
+        const decoder = new TextDecoder();
+        let lastExitCode: number | null = null;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = decoder.decode(value, { stream: true });
+          for (const line of text.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const d = JSON.parse(line.slice(6));
+              if (d.done) lastExitCode = d.exitCode ?? null;
+            } catch { /* skip */ }
+          }
+        }
+        if (lastExitCode === 0) {
+          showToast('数据抓取完成');
+        } else {
+          showToast('抓取异常，请查看日志', 'error');
+        }
+      }
+    } catch {
+      showToast('抓取请求失败', 'error');
+    }
+    setScraping(false);
+    fetchScrapeStatus();
+    fetchCounts();
+    fetchData();
+  }, [scraping, showToast, fetchScrapeStatus, fetchCounts, fetchData]);
 
   useEffect(() => { fetchCounts(); fetchScrapeStatus(); }, [fetchCounts, fetchScrapeStatus]);
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -348,89 +423,77 @@ export default function ReviewPage() {
       </div>
 
       {/* Scrape Status Card */}
-      {scrapeStatus && (
-        <div className="card !py-3 !px-4">
-          <div className="flex items-center gap-6">
-            {/* Status */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-primary-text-muted whitespace-nowrap">抓取状态</span>
-              {scrapeStatus.last_auto_fetch_status === 'running' ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full bg-blue-50 text-blue-600 border border-blue-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />运行中
-                </span>
-              ) : scrapeStatus.last_auto_fetch_status === 'success' ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full bg-green-50 text-green-600 border border-green-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />成功
-                </span>
-              ) : scrapeStatus.last_auto_fetch_status === 'failed' ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full bg-red-50 text-red-600 border border-red-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />失败
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full bg-gray-50 text-gray-500 border border-gray-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />未执行
-                </span>
-              )}
-            </div>
+      {scrapeStatus && (() => {
+        const sc = getScrapeStatusConfig(scrapeStatus.last_auto_fetch_status);
+        const lastRun = formatShortTime(scrapeStatus.last_auto_fetch_at);
+        const lastSuccess = formatShortTime(scrapeStatus.last_auto_fetch_success_at);
+        const nextRun = getNextRunTime(scrapeStatus.auto_fetch_enabled, scrapeStatus.auto_fetch_time);
 
-            <span className="w-px h-4 bg-primary-border/60" />
+        return (
+          <div className={`card !py-3 !px-4 border ${sc.border} ${sc.bg}`}>
+            <div className="flex items-center gap-4">
+              {/* Primary: status summary */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-full border ${sc.badge}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />
+                    {sc.label}
+                  </span>
+                  {scrapeStatus.last_auto_fetch_status === 'success' && total > 0 && (
+                    <span className="text-xs text-primary-text-muted">· 待审核 {total} 部</span>
+                  )}
+                  {scrapeStatus.last_auto_fetch_status === 'success' && lastSuccess && (
+                    <span className="text-xs text-primary-text-muted">· {lastSuccess} 更新</span>
+                  )}
+                  {scrapeStatus.last_auto_fetch_status !== 'success' && nextRun && (
+                    <span className="text-xs text-primary-text-muted">· 下次执行 {nextRun}</span>
+                  )}
+                </div>
+                {/* Secondary details */}
+                {(lastRun || lastSuccess) ? (
+                  <div className="flex items-center gap-4 mt-1.5">
+                    {lastRun && (
+                      <span className="text-[11px] text-primary-text-muted">上次执行 {lastRun}</span>
+                    )}
+                    {lastSuccess && lastSuccess !== lastRun && (
+                      <span className="text-[11px] text-primary-text-muted">上次成功 {lastSuccess}</span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-primary-text-muted mt-1.5">暂无执行记录</p>
+                )}
+              </div>
 
-            {/* Last run */}
-            <div className="flex items-center gap-1.5 text-xs">
-              <span className="text-primary-text-muted">上次执行</span>
-              <span className="text-primary-text">
-                {scrapeStatus.last_auto_fetch_at
-                  ? new Date(scrapeStatus.last_auto_fetch_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-                  : '-'}
-              </span>
-            </div>
-
-            <span className="w-px h-4 bg-primary-border/60" />
-
-            {/* Last success */}
-            <div className="flex items-center gap-1.5 text-xs">
-              <span className="text-primary-text-muted">上次成功</span>
-              <span className="text-primary-text">
-                {scrapeStatus.last_auto_fetch_success_at
-                  ? new Date(scrapeStatus.last_auto_fetch_success_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-                  : '-'}
-              </span>
-            </div>
-
-            <span className="w-px h-4 bg-primary-border/60" />
-
-            {/* Next run */}
-            <div className="flex items-center gap-1.5 text-xs">
-              <span className="text-primary-text-muted">下次执行</span>
-              <span className="text-primary-text">
-                {scrapeStatus.auto_fetch_enabled
-                  ? (() => {
-                      const now = new Date();
-                      const [h, m] = scrapeStatus.auto_fetch_time.split(':').map(Number);
-                      const t = new Date(now);
-                      t.setHours(h, m, 0, 0);
-                      if (t <= now) t.setDate(t.getDate() + 1);
-                      return t.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-                    })()
-                  : '未启用'}
-              </span>
-            </div>
-
-            {/* Action */}
-            <div className="ml-auto">
-              <button
-                onClick={() => fetchScrapeStatus()}
-                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-primary-text-secondary border border-primary-border rounded-md hover:bg-primary-sidebar transition-colors"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                刷新状态
-              </button>
+              {/* Actions */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => fetchScrapeStatus()}
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium text-primary-text-secondary border border-primary-border rounded-lg hover:bg-primary-sidebar transition-colors bg-white"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  刷新
+                </button>
+                <button
+                  onClick={handleRunScraper}
+                  disabled={scraping}
+                  className="flex items-center gap-1 px-3 py-1.5 text-[11px] font-medium text-white bg-primary-accent rounded-lg hover:opacity-90 transition-colors disabled:opacity-50"
+                >
+                  {scraping ? (
+                    <div className="w-3 h-3 border-[1.5px] border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  )}
+                  {scraping ? '抓取中…' : '立即抓取'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Platform Tabs */}
       <div className="flex gap-1.5 overflow-x-auto pb-1">
@@ -525,13 +588,32 @@ export default function ReviewPage() {
         <div className="flex items-center justify-center h-48">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-accent" />
         </div>
-      ) : dramas.length === 0 ? (
-        <div className="card flex flex-col items-center justify-center py-20">
-          <span className="text-5xl mb-4">🎉</span>
-          <p className="text-lg font-medium text-primary-text">暂无待审核剧集</p>
-          <p className="text-sm text-primary-text-muted mt-1">所有剧集已审核完毕</p>
-        </div>
-      ) : (
+      ) : dramas.length === 0 ? (() => {
+        const es = getReviewEmptyState(scrapeStatus?.last_auto_fetch_status);
+        return (
+          <div className="card flex flex-col items-center justify-center py-16">
+            <span className="text-4xl mb-3">{es.emoji}</span>
+            <p className="text-base font-medium text-primary-text">{es.title}</p>
+            <p className="text-sm text-primary-text-muted mt-1">{es.sub}</p>
+            {es.showAction && (
+              <button
+                onClick={handleRunScraper}
+                disabled={scraping}
+                className="mt-4 flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-primary-accent rounded-lg hover:opacity-90 transition-colors disabled:opacity-50"
+              >
+                {scraping ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                )}
+                {scraping ? '抓取中…' : '立即抓取'}
+              </button>
+            )}
+          </div>
+        );
+      })() : (
         <>
           {/* Card Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
