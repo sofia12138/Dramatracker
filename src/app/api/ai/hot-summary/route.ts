@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
       return result;
     };
 
-    function markHotCandidates(dramas: CompactDrama[]): CompactDrama[] {
+    const markHotCandidates = (dramas: CompactDrama[]): CompactDrama[] => {
       if (dramas.length === 0) return dramas;
 
       const heatIncrements = dramas.map(d => d.heat_increment).sort((a, b) => b - a);
@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
           d.heat_increment >= heatP70 ||
           d.material_count >= matP70,
       }));
-    }
+    };
 
     const aiRealAll = queryTop20('ai_real');
     const aiMangaAll = queryTop20('ai_manga');
