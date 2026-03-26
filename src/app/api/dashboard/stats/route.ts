@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
     `).all(dateFrom, dateTo) as { language: string; cnt: number }[];
 
     // === Chart 3: Tag distribution by type (top 5 each) ===
-    function getTagsByType(aiType: string): { tag: string; count: number }[] {
+    const getTagsByType = (aiType: string): { tag: string; count: number }[] => {
       const rows = db.prepare(`
         SELECT DISTINCT d.tags
         FROM drama d
@@ -109,7 +109,7 @@ export async function GET(request: NextRequest) {
         } catch { /* skip */ }
       }
       return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([tag, count]) => ({ tag, count }));
-    }
+    };
 
     const tagDistribution = {
       ai_real: getTagsByType('ai_real'),
