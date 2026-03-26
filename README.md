@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## 🎯 项目简介
 
-## Getting Started
+DramaTracker 是一个面向海外短剧行业的数据监控与分析后台，自动采集 DataEye 平台的榜单数据，结合 AI 大模型提供市场洞察和竞品分析。
 
-First, run the development server:
+**核心价值：**
+- 覆盖 **ShortMax、MoboShort、iDrama** 等 11 个主流海外短剧平台
+- 支持 **269+ 部剧集** 的实时监控与分析
+- **4 项 AI 分析能力**：市场洞察、单剧点评、爆款规律、增长模式识别
+- **5 级权限控制**：适配不同角色需求
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## ✨ 功能特性
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 📊 数据看板
+- 概览数据卡片（监控平台数、AI 短剧总数、本周新上榜、热力增长 TOP1）
+- 平台短剧数量对比（分组柱状图）
+- 投放语种分布（饼图）
+- 题材标签分布（按 AI 真人/AI 漫剧分类 Top5）
+- 周环比热力增长 Top5
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 🏆 榜单监控
+- 三个独立榜单：**AI 真人剧 / AI 漫剧 / 真人剧**
+- 总榜（跨平台去重聚合）+ 各平台 Tab 独立排名
+- 时间范围筛选（今天/近7天/近30天/自定义）
+- 语种筛选
+- 排名变化、热力增量、Sparkline 投放趋势图
+- 剧集详情抽屉（基本信息、趋势图表、可编辑简介）
 
-## Learn More
+### 🤖 AI 智能分析
+| 功能 | 说明 |
+|------|------|
+| 市场洞察报告 | 基于 Top10 榜单数据生成结构化分析（摘要/洞察/风险/建议） |
+| 单剧 AI 点评 | SSE 流式输出，分析目标受众、投放表现、竞品对比 |
+| 爆款规律分析 | 分类型识别爆款共同特征，输出选题方向建议 |
+| 竞品增长模式识别 | 5 种增长类型分类 + 可复制性评估 + 置信度评分 |
 
-To learn more about Next.js, take a look at the following resources:
+### ✅ 人工审核队列
+- 卡片式展示待审核剧集
+- 三分类标记（AI 真人剧/AI 漫剧/真人剧）
+- 两步确认 + 5 秒撤销机制
+- 侧边栏红点实时更新待审核数量
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 📈 播放量管理
+- 周维度录入 APP 内外显播放量
+- 单条编辑 + 批量录入模式
+- CSV 数据导出
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 🔐 用户与权限
+- JWT 认证（Edge Runtime 兼容）
+- **5 级角色权限**：超级管理员、运营、投放、制作、编剧
+- 菜单可见性、页面访问、操作按钮、API 接口四层控制
 
-## Deploy on Vercel
+### 🔔 通知集成
+- 飞书群机器人 Webhook
+- 待审核剧集自动提醒
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
