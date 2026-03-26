@@ -1,6 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
+function normalizeTitle(raw: unknown): string {
+  return ((raw as string) || '')
+    .replace(/\[Updating\]/gi, '')
+    .replace(/\(Updating\)/gi, '')
+    .replace(/【更新中】/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeDateStr(raw: unknown): string {
+  const s = ((raw as string) || '').trim();
+  if (!s) return '';
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  return s;
+}
+
+function getDramaDedupeKey(title: unknown, language: unknown, firstAirDate: unknown, platform?: unknown): string {
+  const t = normalizeTitle(title);
+  const l = ((language as string) || '').trim().toLowerCase();
+  const d = normalizeDateStr(firstAirDate);
+  const parts = platform ? [`${platform}`, t, l, d] : [t, l, d];
+  return parts.join('|');
+}
+
 export async function GET(request: NextRequest) {
   try {
     const db = getDb();
@@ -68,7 +94,9 @@ export async function GET(request: NextRequest) {
           MAX(rs.material_count) as material_count,
           MAX(rs.invest_days) as invest_days,
           MAX(rs.snapshot_date) as snapshot_date,
-          d.title, d.description, d.cover_url, d.language, d.is_ai_drama, d.tags, d.first_air_date, d.creative_count
+          d.title, d.description, d.cover_url, d.language, d.is_ai_drama,
+          COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags) as tags,
+          d.first_air_date, d.creative_count
         FROM ranking_snapshot rs
         LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
         WHERE ${whereClause}
@@ -78,13 +106,24 @@ export async function GET(request: NextRequest) {
       `;
       const data = db.prepare(sql).all(...params, limit);
 
+      // Drama-level dedup: merge iOS/Android records (different playlet_id, same drama)
+      const dedupMap = new Map<string, Record<string, unknown>>();
+      for (const row of data as Record<string, unknown>[]) {
+        const key = getDramaDedupeKey(row.title, row.language, row.first_air_date, row.platform);
+        const existing = dedupMap.get(key);
+        if (!existing || (row.rank as number) < (existing.rank as number)) {
+          dedupMap.set(key, row);
+        }
+      }
+      const dedupedRows = Array.from(dedupMap.values())
+        .sort((a, b) => (a.rank as number) - (b.rank as number));
+
       // Get previous period data for rank change
       // When accumulating data, always fall back to "previous snapshot day" comparison
       const effectiveMode = dataAccumulating ? 'today' : mode;
       const prevData = getPreviousPeriodRanks(db, platform, isAiDrama, effectiveMode, latestDate, startDate, endDate);
 
-      const rows = data as Array<{ playlet_id: string; platform: string; rank: number; [k: string]: unknown }>;
-      const enriched = rows.map((item) => {
+      const enriched = dedupedRows.map((item) => {
         const prev = prevData.get(`${item.playlet_id}:${item.platform}`);
         return {
           ...item,
@@ -118,7 +157,9 @@ export async function GET(request: NextRequest) {
         rs.material_count,
         rs.invest_days,
         rs.snapshot_date,
-        d.title, d.description, d.cover_url, d.language, d.is_ai_drama, d.tags, d.first_air_date, d.creative_count
+        d.title, d.description, d.cover_url, d.language, d.is_ai_drama,
+        COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags) as tags,
+        d.first_air_date, d.creative_count
       FROM ranking_snapshot rs
       LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
       WHERE ${whereClause}
@@ -146,9 +187,10 @@ export async function GET(request: NextRequest) {
       const prevHeat = prevHeatMap.get(`${pid}:${plat}`) || 0;
       const increment = curHeat - prevHeat;
 
-      const existing = dramaMap.get(pid);
+      const dramaKey = getDramaDedupeKey(row.title, row.language, row.first_air_date);
+      const existing = dramaMap.get(dramaKey);
       if (!existing) {
-        dramaMap.set(pid, {
+        dramaMap.set(dramaKey, {
           item: row,
           platforms: [{ name: plat, rank: row.rank as number }],
           heatIncrement: increment,

@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
       const countResult = db.prepare(countSql).get(platform) as { total: number };
 
       const dataSql = `
-        SELECT d.*,
+        SELECT d.*, d.genre_tags_ai, d.genre_tags_manual, d.genre_source,
           MAX(rs.heat_value) as max_heat_value,
           GROUP_CONCAT(DISTINCT rs.platform) as platforms_str
         FROM drama d
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
     const countResult = db.prepare('SELECT COUNT(*) as total FROM drama WHERE is_ai_drama IS NULL').get() as { total: number };
 
     const dataSql = `
-      SELECT d.*,
+      SELECT d.*, d.genre_tags_ai, d.genre_tags_manual, d.genre_source,
         COALESCE(r.max_heat_value, 0) as max_heat_value,
         COALESCE(r.platforms_str, '') as platforms_str
       FROM drama d

@@ -111,7 +111,27 @@ function initDb(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_drama_is_ai ON drama(is_ai_drama);
   `);
 
+  migrateGenreColumns(db);
   seedData(db);
+}
+
+function migrateGenreColumns(db: Database.Database) {
+  const cols = db.prepare("PRAGMA table_info(drama)").all() as { name: string }[];
+  const colNames = new Set(cols.map(c => c.name));
+  if (!colNames.has('genre_tags_ai')) {
+    db.exec("ALTER TABLE drama ADD COLUMN genre_tags_ai TEXT DEFAULT NULL");
+  }
+  if (!colNames.has('genre_tags_manual')) {
+    db.exec("ALTER TABLE drama ADD COLUMN genre_tags_manual TEXT DEFAULT NULL");
+  }
+  if (!colNames.has('genre_source')) {
+    db.exec("ALTER TABLE drama ADD COLUMN genre_source TEXT DEFAULT NULL");
+  }
+  // Backfill: copy existing scraped tags into genre_tags_ai
+  db.exec(`
+    UPDATE drama SET genre_tags_ai = tags, genre_source = 'scraped'
+    WHERE genre_tags_ai IS NULL AND tags IS NOT NULL AND tags != '[]' AND tags != ''
+  `);
 }
 
 function seedData(db: Database.Database) {

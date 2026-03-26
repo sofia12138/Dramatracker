@@ -12,6 +12,9 @@ interface Drama {
   first_air_date: string;
   is_ai_drama: string | null;
   tags: string;
+  genre_tags_ai: string | null;
+  genre_tags_manual: string | null;
+  genre_source: string | null;
   creative_count: number;
   max_heat_value: number;
   platforms_str: string;
@@ -62,6 +65,15 @@ const TYPE_LABELS: Record<string, string> = {
   real: '真人剧',
 };
 
+const GENRE_TAGS = ['情感', '狼人', '复仇', '豪门', '穿越', '逆袭', '悬疑', '家庭', '甜宠', '都市'];
+
+function getGenreTags(drama: Drama): string[] {
+  const manual = drama.genre_tags_manual;
+  const ai = drama.genre_tags_ai;
+  const raw = manual || ai || drama.tags;
+  try { return JSON.parse(raw || '[]'); } catch { return []; }
+}
+
 function getScrapeStatusConfig(status?: string) {
   switch (status) {
     case 'running': return { label: '正在抓取数据', dot: 'bg-blue-500 animate-pulse', badge: 'bg-blue-50 text-blue-600 border-blue-200', border: 'border-blue-200', bg: 'bg-blue-50/40' };
@@ -109,6 +121,10 @@ export default function ReviewPage() {
   const [feishuSending, setFeishuSending] = useState(false);
   const [scrapeStatus, setScrapeStatus] = useState<ScrapeStatus | null>(null);
   const [scraping, setScraping] = useState(false);
+  const [editingGenre, setEditingGenre] = useState<number | null>(null);
+  const [genreSelection, setGenreSelection] = useState<Set<string>>(new Set());
+  const [savingGenre, setSavingGenre] = useState(false);
+  const [aiGenreRunning, setAiGenreRunning] = useState(false);
   const toastId = useRef(0);
   const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
@@ -315,6 +331,63 @@ export default function ReviewPage() {
     return platformCounts.find(p => p.platform === platform)?.count || 0;
   };
 
+  const openGenreEditor = (drama: Drama) => {
+    const current = getGenreTags(drama);
+    setGenreSelection(new Set(current));
+    setEditingGenre(drama.id);
+  };
+
+  const toggleGenreTag = (tag: string) => {
+    setGenreSelection(prev => {
+      const s = new Set(prev);
+      if (s.has(tag)) s.delete(tag); else s.add(tag);
+      return s;
+    });
+  };
+
+  const saveGenreTags = async () => {
+    if (editingGenre === null) return;
+    setSavingGenre(true);
+    try {
+      const res = await fetch('/api/drama/genre', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ drama_id: editingGenre, genre_tags_manual: Array.from(genreSelection) }),
+      });
+      if (res.ok) {
+        setDramas(prev => prev.map(d =>
+          d.id === editingGenre
+            ? { ...d, genre_tags_manual: JSON.stringify(Array.from(genreSelection)), genre_source: 'manual' }
+            : d
+        ));
+        showToast('题材标签已保存');
+      } else {
+        showToast('保存失败', 'error');
+      }
+    } catch { showToast('网络异常', 'error'); }
+    setSavingGenre(false);
+    setEditingGenre(null);
+  };
+
+  const handleAiGenre = async () => {
+    setAiGenreRunning(true);
+    try {
+      const res = await fetch('/api/drama/genre', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`AI题材识别完成，处理 ${data.processed} 部`);
+        fetchData();
+      } else {
+        showToast(data.error || 'AI识别失败', 'error');
+      }
+    } catch { showToast('网络异常', 'error'); }
+    setAiGenreRunning(false);
+  };
+
   return (
     <div className="space-y-4">
       {/* Toast Container */}
@@ -390,6 +463,47 @@ export default function ReviewPage() {
         </>
       )}
 
+      {/* Genre Editor Modal */}
+      {editingGenre !== null && (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-50" onClick={() => setEditingGenre(null)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-primary-card rounded-xl shadow-2xl p-5 w-[340px] border border-primary-border">
+            <h3 className="text-sm font-semibold text-primary-text mb-1">编辑题材标签</h3>
+            <p className="text-[11px] text-primary-text-muted mb-3">
+              {dramas.find(d => d.id === editingGenre)?.title}
+            </p>
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {GENRE_TAGS.map(tag => (
+                <button
+                  key={tag}
+                  onClick={() => toggleGenreTag(tag)}
+                  className={`px-2.5 py-1 text-xs rounded-lg border transition-all ${
+                    genreSelection.has(tag)
+                      ? 'bg-orange-500 text-white border-orange-500 font-medium'
+                      : 'bg-white text-primary-text-secondary border-primary-border hover:border-orange-300'
+                  }`}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setEditingGenre(null)}
+                className="px-3 py-1.5 text-xs border border-primary-border rounded-lg hover:bg-primary-sidebar transition-colors">
+                取消
+              </button>
+              <button
+                onClick={saveGenreTags}
+                disabled={savingGenre}
+                className="px-3 py-1.5 text-xs font-medium bg-primary-accent text-white rounded-lg hover:opacity-90 disabled:opacity-50"
+              >
+                {savingGenre ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -398,6 +512,21 @@ export default function ReviewPage() {
             待审核：{total}部
           </span>
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleAiGenre}
+            disabled={aiGenreRunning}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-primary-border bg-white text-primary-text-secondary hover:text-primary-accent hover:border-primary-accent transition-colors disabled:opacity-50"
+          >
+            {aiGenreRunning ? (
+              <div className="w-3.5 h-3.5 border-[1.5px] border-primary-accent border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+              </svg>
+            )}
+            {aiGenreRunning ? '识别中...' : 'AI补全题材'}
+          </button>
         <button
           disabled={feishuSending}
           onClick={async () => {
@@ -420,6 +549,7 @@ export default function ReviewPage() {
           </svg>
           {feishuSending ? '发送中...' : '飞书提醒'}
         </button>
+        </div>
       </div>
 
       {/* Scrape Status Card */}
@@ -694,11 +824,31 @@ export default function ReviewPage() {
                       {platforms.length > 3 && (
                         <span className="text-[10px] text-primary-text-muted self-center">+{platforms.length - 3}</span>
                       )}
-                      {tags.slice(0, 2).map((tag: string, i: number) => (
-                        <span key={`tag-${i}`} className="px-1.5 py-0.5 text-[10px] rounded bg-orange-50 text-orange-500 border border-orange-200">
-                          {tag}
-                        </span>
-                      ))}
+                    </div>
+                    {/* Genre tags */}
+                    <div className="flex items-center gap-1 min-h-[22px]">
+                      {(() => {
+                        const genreTags = getGenreTags(drama);
+                        if (genreTags.length > 0) {
+                          return genreTags.slice(0, 3).map((tag: string, i: number) => (
+                            <span key={`g-${i}`} className="px-1.5 py-0.5 text-[10px] rounded bg-orange-50 text-orange-500 border border-orange-200">
+                              {tag}
+                            </span>
+                          ));
+                        }
+                        return (
+                          <span className="text-[10px] text-amber-500 italic">题材待补充</span>
+                        );
+                      })()}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openGenreEditor(drama); }}
+                        className="ml-auto p-0.5 text-primary-text-muted hover:text-primary-accent transition-colors"
+                        title="编辑题材"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
 
