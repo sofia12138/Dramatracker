@@ -50,9 +50,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       ...config,
       ai_api_key: config.ai_api_key ? '***' + config.ai_api_key.slice(-4) : '',
-      cookie_status: config.cookie
-        ? (config.cookie_updated_at ? 'valid' : 'valid')
-        : 'none',
+      cookie_status: config.cookie ? 'configured' : 'none',
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

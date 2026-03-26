@@ -152,7 +152,9 @@ export async function GET(request: NextRequest) {
           bestPlatform: plat,
         });
       } else {
-        existing.platforms.push({ name: plat, rank: row.rank as number });
+        if (!existing.platforms.some(p => p.name === plat)) {
+          existing.platforms.push({ name: plat, rank: row.rank as number });
+        }
         if (increment > existing.heatIncrement) {
           existing.heatIncrement = increment;
           existing.item = row;

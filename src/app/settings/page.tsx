@@ -57,6 +57,7 @@ export default function SettingsPage() {
   // Cookie
   const [cookieText, setCookieText] = useState('');
   const [savingCookie, setSavingCookie] = useState(false);
+  const [cookieCheckResult, setCookieCheckResult] = useState<{ status: string; message: string } | null>(null);
 
   // Auto fetch
   const [autoFetchEnabled, setAutoFetchEnabled] = useState(false);
@@ -346,8 +347,8 @@ export default function SettingsPage() {
           <h2 className="text-base font-semibold text-primary-text">Cookie 配置</h2>
           <div className="flex items-center gap-2">
             {config?.cookie ? (
-              <span className="flex items-center gap-1 text-xs text-green-600">
-                <span>✅</span> 有效
+              <span className="flex items-center gap-1 text-xs text-primary-text-secondary">
+                <span>📋</span> 已配置
               </span>
             ) : (
               <span className="flex items-center gap-1 text-xs text-red-500">
@@ -366,18 +367,47 @@ export default function SettingsPage() {
         />
 
         <div className="flex items-center justify-between">
-          <button
-            onClick={handleSaveCookie}
-            disabled={savingCookie}
-            className="px-4 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-          >
-            {savingCookie ? '保存中...' : '保存 Cookie'}
-          </button>
-          {config?.cookie_updated_at && (
-            <span className="text-xs text-primary-text-muted">
-              最后更新：{new Date(config.cookie_updated_at).toLocaleString('zh-CN')}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSaveCookie}
+              disabled={savingCookie}
+              className="px-4 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {savingCookie ? '保存中...' : '保存 Cookie'}
+            </button>
+            <button
+              onClick={async () => {
+                setCookieCheckResult({ status: 'checking', message: '检测中...' });
+                try {
+                  const res = await fetch('/api/config/check-cookie', { method: 'POST' });
+                  const data = await res.json();
+                  setCookieCheckResult(data);
+                } catch {
+                  setCookieCheckResult({ status: 'error', message: '网络异常' });
+                }
+              }}
+              disabled={!config?.cookie || cookieCheckResult?.status === 'checking'}
+              className="px-3 py-2 border border-primary-border text-primary-text-secondary rounded-lg text-sm font-medium hover:bg-primary-card transition-colors disabled:opacity-50"
+            >
+              {cookieCheckResult?.status === 'checking' ? '检测中...' : '检测 Cookie'}
+            </button>
+          </div>
+          <div className="flex items-center gap-3">
+            {cookieCheckResult && cookieCheckResult.status !== 'checking' && (
+              <span className={`flex items-center gap-1 text-xs font-medium ${
+                cookieCheckResult.status === 'valid' ? 'text-green-600' :
+                cookieCheckResult.status === 'expired' ? 'text-orange-500' : 'text-red-500'
+              }`}>
+                {cookieCheckResult.status === 'valid' ? '✅ 有效' :
+                 cookieCheckResult.status === 'expired' ? '⚠️ 已失效' : '❌ 检测失败'}
+              </span>
+            )}
+            {config?.cookie_updated_at && (
+              <span className="text-xs text-primary-text-muted">
+                最后更新：{new Date(config.cookie_updated_at).toLocaleString('zh-CN')}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

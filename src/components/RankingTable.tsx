@@ -412,22 +412,30 @@ export default function RankingTable({ type, title }: Props) {
                       </td>
 
                       {/* Platforms (overall only) */}
-                      {isOverall && (
+                      {isOverall && (() => {
+                        const seen = new Set<string>();
+                        const uniquePlats = (item.platforms_list || []).filter(p => {
+                          if (seen.has(p.name)) return false;
+                          seen.add(p.name);
+                          return true;
+                        });
+                        return (
                         <td className="py-3 px-3">
                           <div className="flex flex-wrap gap-1">
-                            {(item.platforms_list || []).slice(0, 3).map((p, i) => (
+                            {uniquePlats.slice(0, 3).map((p, i) => (
                               <span key={i} className="px-1.5 py-0.5 text-[10px] rounded bg-primary-sidebar text-primary-text-secondary border border-primary-border">
                                 {p.name}
                               </span>
                             ))}
-                            {(item.platforms_list || []).length > 3 && (
+                            {uniquePlats.length > 3 && (
                               <span className="text-[10px] text-primary-text-muted self-center">
-                                +{(item.platforms_list || []).length - 3}
+                                +{uniquePlats.length - 3}
                               </span>
                             )}
                           </div>
                         </td>
-                      )}
+                        );
+                      })()}
 
                       {/* First Air Date */}
                       <td className="py-3 px-2 text-xs text-primary-text-secondary whitespace-nowrap">
