@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    function queryTop20(typeFilter: string): CompactDrama[] {
+    const queryTop20 = (typeFilter: string): CompactDrama[] => {
       const rawList = db.prepare(`
         SELECT d.title, rs.platform, rs.rank, rs.heat_value,
           d.language, d.tags, rs.material_count, rs.invest_days, d.playlet_id
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
       }
 
       return result;
-    }
+    };
 
     function markHotCandidates(dramas: CompactDrama[]): CompactDrama[] {
       if (dramas.length === 0) return dramas;
