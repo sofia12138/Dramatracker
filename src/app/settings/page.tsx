@@ -2,8 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useAIStream } from '@/hooks/useAIStream';
-import AIMarkdown from '@/components/AIMarkdown';
+
 
 interface Platform {
   id: number;
@@ -22,9 +21,6 @@ interface Config {
   last_auto_fetch_at?: string;
   last_auto_fetch_success_at?: string;
   last_auto_fetch_status?: string;
-  ai_api_key: string;
-  ai_model: string;
-  ai_base_url: string;
 }
 
 interface Stats {
@@ -68,11 +64,6 @@ export default function SettingsPage() {
   const [fetchLogs, setFetchLogs] = useState<string[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
 
-  // AI config
-  const [aiApiKey, setAiApiKey] = useState('');
-  const [testingAi, setTestingAi] = useState(false);
-  const [aiStatus, setAiStatus] = useState<{ ok: boolean; msg: string } | null>(null);
-
   // Platform form
   const [showPlatformForm, setShowPlatformForm] = useState(false);
   const [editingPlatform, setEditingPlatform] = useState<Platform | null>(null);
@@ -82,9 +73,7 @@ export default function SettingsPage() {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  // Weekly report
   const { hasPermission } = useAuth();
-  const weeklyReport = useAIStream();
 
   // Toast
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -203,32 +192,6 @@ export default function SettingsPage() {
       addLog(`❌ 抓取失败: ${err instanceof Error ? err.message : String(err)}`);
     }
     setFetching(false);
-  };
-
-  // --- AI Config ---
-  const handleSaveAiKey = async () => {
-    await fetch('/api/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ai_api_key: aiApiKey }),
-    });
-    showToast('API Key 已保存');
-    setAiApiKey('');
-    const res = await fetch('/api/config').then(r => r.json());
-    setConfig(res);
-  };
-
-  const handleTestAi = async () => {
-    setTestingAi(true);
-    setAiStatus(null);
-    try {
-      const res = await fetch('/api/config/test-ai', { method: 'POST' });
-      const data = await res.json();
-      setAiStatus({ ok: data.success, msg: data.message });
-    } catch {
-      setAiStatus({ ok: false, msg: '请求失败' });
-    }
-    setTestingAi(false);
   };
 
   // --- Platform ---
@@ -621,153 +584,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* ====== 5. AI 配置 ====== */}
-      <div className="card space-y-4">
-        <h2 className="text-base font-semibold text-primary-text">AI 配置</h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs text-primary-text-secondary mb-1">百炼 API Key</label>
-            <div className="flex gap-2">
-              <input
-                type="password"
-                value={aiApiKey}
-                onChange={e => setAiApiKey(e.target.value)}
-                placeholder={config?.ai_api_key ? `当前: ${config.ai_api_key}` : '请输入 API Key'}
-                className="flex-1 px-3 py-2 border border-primary-border rounded-lg bg-white text-sm focus:outline-none focus:border-primary-accent"
-              />
-              <button onClick={handleSaveAiKey} disabled={!aiApiKey}
-                className="px-4 py-2 bg-primary-accent text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50">
-                保存
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center gap-4">
-              <div>
-                <label className="block text-xs text-primary-text-secondary mb-1">模型</label>
-                <p className="text-sm text-primary-text font-mono">qwen3.5-plus</p>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-primary-text-secondary mb-1">Base URL</label>
-              <p className="text-xs text-primary-text-muted font-mono break-all">
-                https://dashscope.aliyuncs.com/compatible-mode/v1
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleTestAi}
-            disabled={testingAi}
-            className="px-4 py-2 border border-primary-border rounded-lg text-sm text-primary-text-secondary hover:bg-primary-card disabled:opacity-50 flex items-center gap-2"
-          >
-            {testingAi && <div className="w-3 h-3 border-2 border-primary-accent border-t-transparent rounded-full animate-spin" />}
-            {testingAi ? '测试中...' : '测试连接'}
-          </button>
-          {aiStatus && (
-            <span className={`text-sm flex items-center gap-1 ${aiStatus.ok ? 'text-green-600' : 'text-red-500'}`}>
-              {aiStatus.ok ? '✅' : '❌'} {aiStatus.msg}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* ====== 6. AI 周报生成 ====== */}
-      {hasPermission('use_ai') && (
-        <div className="card space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-primary-text">每周市场周报</h2>
-            <div className="flex items-center gap-2">
-              {weeklyReport.content && !weeklyReport.loading && (
-                <>
-                  <button onClick={() => navigator.clipboard.writeText(weeklyReport.content).then(() => showToast('已复制到剪贴板'))}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary-text-secondary bg-primary-card border border-primary-border rounded-lg hover:bg-primary-sidebar transition-colors">
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                    一键复制
-                  </button>
-                  <button onClick={() => {
-                    const blob = new Blob([weeklyReport.content], { type: 'text/markdown;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `周报_${new Date().toISOString().slice(0, 10)}.md`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                    showToast('已导出周报');
-                  }}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-primary-accent rounded-lg hover:opacity-90 transition-colors">
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    导出周报
-                  </button>
-                </>
-              )}
-              <button
-                onClick={() => {
-                  if (weeklyReport.loading) { weeklyReport.abort(); return; }
-                  weeklyReport.reset();
-                  weeklyReport.generate('weekly_report', undefined, true);
-                }}
-                className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-white bg-gradient-to-r from-primary-accent to-indigo-500 rounded-lg hover:opacity-90 transition-all">
-                {weeklyReport.loading ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    停止生成
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    生成本周周报
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {weeklyReport.error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
-              {weeklyReport.error}
-              <button onClick={() => { weeklyReport.reset(); weeklyReport.generate('weekly_report', undefined, true); }}
-                className="ml-2 underline">重试</button>
-            </div>
-          )}
-
-          {weeklyReport.loading && !weeklyReport.content && (
-            <div className="flex items-center justify-center py-12">
-              <div className="flex flex-col items-center gap-3">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-accent" />
-                <p className="text-sm text-primary-text-muted">正在生成本周市场周报...</p>
-              </div>
-            </div>
-          )}
-
-          {weeklyReport.content && (
-            <div className="bg-primary-card border border-primary-border rounded-lg p-6 max-h-[600px] overflow-y-auto">
-              <AIMarkdown content={weeklyReport.content} />
-              {weeklyReport.loading && (
-                <span className="inline-block w-2 h-4 bg-primary-accent animate-pulse ml-0.5" />
-              )}
-            </div>
-          )}
-
-          {!weeklyReport.content && !weeklyReport.loading && !weeklyReport.error && (
-            <p className="text-sm text-primary-text-muted py-4 text-center">
-              点击&quot;生成本周周报&quot;按钮，AI 将基于本周与上周的榜单数据对比生成市场周报
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* ====== 7. 数据统计 ====== */}
+      {/* ====== 5. 数据统计 ====== */}
       <div className="card space-y-4">
         <h2 className="text-base font-semibold text-primary-text">数据统计</h2>
 
