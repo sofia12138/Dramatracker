@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
     fs.writeFileSync(tmpPath, buffer);
 
     // Step 2: Validate the uploaded file is a valid SQLite database
-    let importedCounts: Record<string, number> = {};
+    const importedCounts: Record<string, number> = {};
     try {
       const tmpDb = new Database(tmpPath, { readonly: true });
       const tables = tmpDb.prepare(
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
       }
 
       tmpDb.close();
-    } catch (e) {
+    } catch {
       if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
       return NextResponse.json({ error: '上传的文件不是有效的 SQLite 数据库' }, { status: 400 });
     }
@@ -161,7 +161,7 @@ export async function POST(request: NextRequest) {
         ranking_snapshot: (db.prepare('SELECT COUNT(*) as c FROM ranking_snapshot').get() as { c: number }).c,
         invest_trend: (db.prepare('SELECT COUNT(*) as c FROM invest_trend').get() as { c: number }).c,
       };
-    } catch (e) {
+    } catch {
       // Rollback: restore backup
       if (backupName) {
         const backupPath = path.join(getDbDir(), backupName);
