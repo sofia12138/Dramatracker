@@ -3,15 +3,18 @@ import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'dramatracker.db');
+const DB_DIR = path.join(process.cwd(), 'data');
+const DB_PATH = path.join(DB_DIR, 'dramatracker.db');
 
 let db: Database.Database | null = null;
 
+export function getDbPath() { return DB_PATH; }
+export function getDbDir() { return DB_DIR; }
+
 export function getDb(): Database.Database {
   if (!db) {
-    const dir = path.dirname(DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(DB_DIR)) {
+      fs.mkdirSync(DB_DIR, { recursive: true });
     }
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
@@ -20,6 +23,17 @@ export function getDb(): Database.Database {
     initDb(db);
   }
   return db;
+}
+
+/**
+ * Close current DB connection so the file can be safely replaced.
+ * Next call to getDb() will re-open and re-init.
+ */
+export function resetDb() {
+  if (db) {
+    try { db.close(); } catch { /* already closed */ }
+    db = null;
+  }
 }
 
 function initDb(db: Database.Database) {
