@@ -106,6 +106,7 @@ export default function ReviewPage() {
   const [dramas, setDramas] = useState<Drama[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
+  const [overallTotal, setOverallTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [selectedPlatform, setSelectedPlatform] = useState('');
   const [platformCounts, setPlatformCounts] = useState<PlatformCount[]>([]);
@@ -124,6 +125,7 @@ export default function ReviewPage() {
   const [aiGenreRunning, setAiGenreRunning] = useState(false);
   const toastId = useRef(0);
   const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const selectedPlatformRef = useRef(selectedPlatform);
 
   const showToast = useCallback((message: string, type = 'success', undoAction?: () => void) => {
     const id = ++toastId.current;
@@ -145,18 +147,26 @@ export default function ReviewPage() {
       .catch(() => {});
   }, []);
 
+  const applyCounts = useCallback((counts: { total: number; platformCounts: PlatformCount[] }) => {
+    setOverallTotal(counts.total);
+    setPlatformCounts(counts.platformCounts);
+    if (!selectedPlatformRef.current) {
+      setTotal(counts.total);
+    }
+  }, []);
+
   const fetchCounts = useCallback(() => {
     apiFetch('/api/drama/pending-count')
       .then(r => r.json())
       .then(data => {
-        setTotal(data.count || 0);
-        setPlatformCounts(data.platformCounts || []);
+        applyCounts({ total: data.count || 0, platformCounts: data.platformCounts || [] });
       })
       .catch(() => {});
-  }, []);
+  }, [applyCounts]);
 
   const fetchData = useCallback(() => {
     setLoading(true);
+    selectedPlatformRef.current = selectedPlatform;
     const params = new URLSearchParams({
       page: String(page),
       pageSize: '40',
@@ -166,7 +176,15 @@ export default function ReviewPage() {
     apiFetch(`/api/drama/review?${params}`)
       .then(r => r.json())
       .then(result => {
-        setDramas(result.data || []);
+        const raw: Drama[] = result.data || [];
+        const seen = new Set<number>();
+        const deduped = raw.filter(d => {
+          if (seen.has(d.id)) return false;
+          seen.add(d.id);
+          return true;
+        });
+        setDramas(deduped);
+        setTotal(result.total ?? 0);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -240,24 +258,37 @@ export default function ReviewPage() {
     setFadingOut(prev => new Set(prev).add(dramaId));
 
     try {
-      await apiFetch(`/api/drama/${dramaId}`, {
+      const res = await apiFetch(`/api/drama/${dramaId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_ai_drama: type }),
       });
+      const resData = await res.json();
+
+      if (!res.ok || resData.changes === 0) {
+        setFadingOut(prev => { const s = new Set(prev); s.delete(dramaId); return s; });
+        showToast(resData.error || '审核未生效，数据库未更新', 'error');
+        return;
+      }
+
+      if (resData.counts) applyCounts(resData.counts);
 
       const drama = dramas.find(d => d.id === dramaId);
 
       const undoAction = async () => {
-        await apiFetch(`/api/drama/${dramaId}`, {
+        const undoRes = await apiFetch(`/api/drama/${dramaId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ is_ai_drama: null }),
         });
-        setDramas(prev => drama ? [drama, ...prev] : prev);
-        setTotal(prev => prev + 1);
-        fetchCounts();
-        showToast('已撤销');
+        const undoData = await undoRes.json();
+        if (undoRes.ok) {
+          if (undoData.counts) applyCounts(undoData.counts);
+          fetchData();
+          showToast('已撤销');
+        } else {
+          showToast('撤销失败', 'error');
+        }
       };
 
       showToast(`"${drama?.title || ''}" 已标记为${TYPE_LABELS[type]}`, 'success', undoAction);
@@ -267,8 +298,7 @@ export default function ReviewPage() {
         setFadingOut(prev => { const s = new Set(prev); s.delete(dramaId); return s; });
         setSelectedIds(prev => { const s = new Set(prev); s.delete(dramaId); return s; });
         setPendingType(prev => { const m = new Map(prev); m.delete(dramaId); return m; });
-        setTotal(prev => Math.max(0, prev - 1));
-        fetchCounts();
+        fetchData();
       }, 300);
     } catch {
       setFadingOut(prev => { const s = new Set(prev); s.delete(dramaId); return s; });
@@ -292,14 +322,21 @@ export default function ReviewPage() {
       });
       const result = await res.json();
 
+      if (!res.ok) {
+        setFadingOut(new Set());
+        showToast(result.error || '批量操作失败', 'error');
+        return;
+      }
+
+      if (result.counts) applyCounts(result.counts);
+
       showToast(`已批量标记 ${result.updated} 部为${TYPE_LABELS[type]}`);
 
       setTimeout(() => {
         setDramas(prev => prev.filter(d => !selectedIds.has(d.id)));
         setFadingOut(new Set());
         setSelectedIds(new Set());
-        setTotal(result.remaining ?? 0);
-        fetchCounts();
+        fetchData();
       }, 300);
     } catch {
       setFadingOut(new Set());
@@ -566,8 +603,8 @@ export default function ReviewPage() {
                     <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />
                     {sc.label}
                   </span>
-                  {scrapeStatus.last_auto_fetch_status === 'success' && total > 0 && (
-                    <span className="text-xs text-primary-text-muted">· 待审核 {total} 部</span>
+                  {scrapeStatus.last_auto_fetch_status === 'success' && overallTotal > 0 && (
+                    <span className="text-xs text-primary-text-muted">· 待审核 {overallTotal} 部</span>
                   )}
                   {scrapeStatus.last_auto_fetch_status === 'success' && lastSuccess && (
                     <span className="text-xs text-primary-text-muted">· {lastSuccess} 更新</span>
@@ -634,7 +671,7 @@ export default function ReviewPage() {
         >
           全部
           <span className={`ml-1.5 text-xs ${!selectedPlatform ? 'text-primary-accent/70' : 'text-primary-text-muted'}`}>
-            {total}
+            {overallTotal}
           </span>
         </button>
         {PLATFORMS.map(p => {

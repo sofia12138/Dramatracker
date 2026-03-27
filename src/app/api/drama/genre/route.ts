@@ -3,6 +3,8 @@ import { getDb } from '@/lib/db';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 import { getAIClient, getAIModel } from '@/lib/ai';
 
+export const dynamic = 'force-dynamic';
+
 const GENRE_TAGS = ['情感', '狼人', '复仇', '豪门', '穿越', '逆袭', '悬疑', '家庭', '甜宠', '都市'];
 
 export async function PATCH(request: NextRequest) {
@@ -18,11 +20,16 @@ export async function PATCH(request: NextRequest) {
     }
 
     const valid = genre_tags_manual.filter((t: string) => GENRE_TAGS.includes(t));
-    db.prepare(
+    const result = db.prepare(
       `UPDATE drama SET genre_tags_manual = ?, genre_source = 'manual', updated_at = datetime('now') WHERE id = ?`
     ).run(JSON.stringify(valid), drama_id);
 
-    return NextResponse.json({ success: true, tags: valid });
+    console.log(`[genre] save manual tags drama_id=${drama_id} tags=${JSON.stringify(valid)} changes=${result.changes}`);
+
+    if (result.changes === 0) {
+      return NextResponse.json({ error: `未找到 id=${drama_id} 的剧集` }, { status: 404 });
+    }
+    return NextResponse.json({ success: true, tags: valid, changes: result.changes });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: msg }, { status: 500 });

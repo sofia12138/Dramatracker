@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
+import { getPendingReviewTotal, getPendingReviewCounts } from '@/lib/review-count';
 
 export async function GET(request: NextRequest) {
   const auth = checkPermission(request, 'review_drama');
@@ -24,7 +25,10 @@ export async function GET(request: NextRequest) {
       const countResult = db.prepare(countSql).get(platform) as { total: number };
 
       const dataSql = `
-        SELECT d.*, d.genre_tags_ai, d.genre_tags_manual, d.genre_source,
+        SELECT d.id, d.playlet_id, d.title, d.description, d.language,
+          d.cover_url, d.first_air_date, d.is_ai_drama, d.tags,
+          d.creative_count, d.created_at, d.updated_at,
+          d.genre_tags_ai, d.genre_tags_manual, d.genre_source,
           MAX(rs.heat_value) as max_heat_value,
           GROUP_CONCAT(DISTINCT rs.platform) as platforms_str
         FROM drama d
@@ -36,13 +40,17 @@ export async function GET(request: NextRequest) {
       `;
       const data = db.prepare(dataSql).all(platform, pageSize, offset);
 
+      console.log(`[review] GET total=${countResult.total} data=${data.length} platform=${platform}`);
       return NextResponse.json({ data, total: countResult.total, page, pageSize });
     }
 
-    const countResult = db.prepare('SELECT COUNT(*) as total FROM drama WHERE is_ai_drama IS NULL').get() as { total: number };
+    const total = getPendingReviewTotal();
 
     const dataSql = `
-      SELECT d.*, d.genre_tags_ai, d.genre_tags_manual, d.genre_source,
+      SELECT d.id, d.playlet_id, d.title, d.description, d.language,
+        d.cover_url, d.first_air_date, d.is_ai_drama, d.tags,
+        d.creative_count, d.created_at, d.updated_at,
+        d.genre_tags_ai, d.genre_tags_manual, d.genre_source,
         COALESCE(r.max_heat_value, 0) as max_heat_value,
         COALESCE(r.platforms_str, '') as platforms_str
       FROM drama d
@@ -54,12 +62,14 @@ export async function GET(request: NextRequest) {
         GROUP BY playlet_id
       ) r ON d.playlet_id = r.playlet_id
       WHERE d.is_ai_drama IS NULL
-      ORDER BY r.max_heat_value DESC NULLS LAST, d.updated_at DESC
+      GROUP BY d.id
+      ORDER BY max_heat_value DESC NULLS LAST, d.updated_at DESC
       LIMIT ? OFFSET ?
     `;
     const data = db.prepare(dataSql).all(pageSize, offset);
 
-    return NextResponse.json({ data, total: countResult.total, page, pageSize });
+    console.log(`[review] GET total=${total} data=${data.length} platform=全部`);
+    return NextResponse.json({ data, total, page, pageSize });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });
@@ -80,13 +90,15 @@ export async function POST(request: NextRequest) {
     }
 
     const placeholders = ids.map(() => '?').join(',');
-    db.prepare(
+    const result = db.prepare(
       `UPDATE drama SET is_ai_drama = ?, updated_at = datetime('now') WHERE id IN (${placeholders})`
     ).run(is_ai_drama, ...ids);
 
-    const remaining = (db.prepare('SELECT COUNT(*) as count FROM drama WHERE is_ai_drama IS NULL').get() as { count: number }).count;
+    console.log(`[review] batch classify ids=[${ids}] as ${is_ai_drama} changes=${result.changes}`);
 
-    return NextResponse.json({ success: true, updated: ids.length, remaining });
+    const counts = getPendingReviewCounts();
+
+    return NextResponse.json({ success: true, updated: result.changes, counts });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });
