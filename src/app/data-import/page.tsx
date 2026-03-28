@@ -3,13 +3,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { apiFetch } from '@/lib/fetch';
 
-interface DbInfo {
-  exists: boolean;
-  size: number;
-  sizeFormatted: string;
-  modifiedAt: string;
-}
-
 interface BackupEntry {
   name: string;
   size: number;
@@ -20,13 +13,11 @@ interface BackupEntry {
 interface ImportResult {
   success: boolean;
   message: string;
-  backup: string;
-  importedCounts: Record<string, number>;
+  stats: { drama_new: number; drama_updated: number; drama_skipped: number; ranking_inserted: number; trend_inserted: number };
   newCounts: Record<string, number>;
 }
 
 export default function DataImportPage() {
-  const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [backups, setBackups] = useState<BackupEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,7 +32,6 @@ export default function DataImportPage() {
     apiFetch('/api/data/import')
       .then(r => r.json())
       .then(data => {
-        setDbInfo(data.dbInfo);
         setCounts(data.counts || {});
         setBackups(data.backups || []);
         setLoading(false);
@@ -72,8 +62,8 @@ export default function DataImportPage() {
     }
 
     const confirmed = window.confirm(
-      `确定要用 "${selectedFile.name}" (${formatBytes(selectedFile.size)}) 替换当前线上数据库吗？\n\n` +
-      '⚠️ 此操作将替换线上全部数据，旧数据库会自动备份。'
+      `确定要从 "${selectedFile.name}" (${formatBytes(selectedFile.size)}) 导入抓取数据吗？\n\n` +
+      '✅ 只会合并抓取数据，不会覆盖线上已有的审核结果。'
     );
     if (!confirmed) return;
 
@@ -116,9 +106,9 @@ export default function DataImportPage() {
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold text-primary-text">数据库导入</h1>
+          <h1 className="text-2xl font-bold text-primary-text">抓取数据导入</h1>
           <p className="mt-1 text-sm text-primary-text-muted">
-            上传本地抓取好的 SQLite 数据库文件，替换线上数据。旧数据库会自动备份。
+            上传本地抓取的 SQLite 数据库，增量合并到线上。已有的审核结果不会被覆盖。
           </p>
         </div>
 
@@ -133,21 +123,18 @@ export default function DataImportPage() {
 
           {loading ? (
             <div className="text-primary-text-muted text-sm">加载中...</div>
-          ) : dbInfo?.exists ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <InfoCard label="文件大小" value={dbInfo.sizeFormatted} />
-              <InfoCard label="最后修改" value={formatDate(dbInfo.modifiedAt)} />
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <InfoCard label="剧集数量" value={String(counts.drama || 0)} />
               <InfoCard label="榜单快照" value={String(counts.ranking_snapshot || 0)} />
+              <InfoCard label="投放趋势" value={String(counts.invest_trend || 0)} />
             </div>
-          ) : (
-            <div className="text-yellow-600 text-sm">数据库文件不存在</div>
           )}
 
           <div className="mt-4">
             <button
               onClick={handleDownloadBackup}
-              disabled={!dbInfo?.exists}
+              disabled={!counts.drama}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-primary-border text-primary-text hover:bg-primary-sidebar transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -170,13 +157,13 @@ export default function DataImportPage() {
           <div className="space-y-4">
             {/* Instructions */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
-              <p className="font-medium mb-2">导入说明：</p>
+              <p className="font-medium mb-2">安全导入说明：</p>
               <ul className="list-disc list-inside space-y-1 text-blue-700">
-                <li>仅支持 <code className="bg-blue-100 px-1 rounded">.db</code> 格式的 SQLite 文件</li>
-                <li>文件大小限制：100 MB</li>
+                <li>仅支持 <code className="bg-blue-100 px-1 rounded">.db</code> 格式的 SQLite 文件（最大 100 MB）</li>
                 <li>上传的数据库必须包含 <code className="bg-blue-100 px-1 rounded">drama</code> 和 <code className="bg-blue-100 px-1 rounded">ranking_snapshot</code> 表</li>
-                <li>导入前会自动备份当前数据库</li>
-                <li>导入后数据库连接会自动重建，无需重启服务</li>
+                <li><strong>增量合并</strong>：新剧集会插入，已有剧集只更新标题、封面等抓取字段</li>
+                <li><strong>审核保护</strong>：线上已有的 <code className="bg-blue-100 px-1 rounded">is_ai_drama</code>、题材标签等审核结果不会被覆盖</li>
+                <li>榜单快照和投放趋势按唯一键去重，不会产生重复数据</li>
               </ul>
             </div>
 
@@ -244,15 +231,15 @@ export default function DataImportPage() {
                   </svg>
                   {result.message}
                 </p>
-                {result.backup && (
-                  <p className="text-xs text-green-700">备份文件：{result.backup}</p>
-                )}
                 <div className="grid grid-cols-2 gap-4 mt-2">
                   <div>
-                    <p className="text-xs font-medium text-green-800 mb-1">导入数据概览</p>
-                    {Object.entries(result.importedCounts).map(([table, count]) => (
-                      <p key={table} className="text-xs text-green-700">{table}: {count} 条</p>
-                    ))}
+                    <p className="text-xs font-medium text-green-800 mb-1">合并结果</p>
+                    <p className="text-xs text-green-700">新增剧集：{result.stats.drama_new} 部</p>
+                    <p className="text-xs text-green-700">更新元数据：{result.stats.drama_updated} 部</p>
+                    <p className="text-xs text-green-700">新增榜单记录：{result.stats.ranking_inserted} 条</p>
+                    {result.stats.trend_inserted > 0 && (
+                      <p className="text-xs text-green-700">新增投放趋势：{result.stats.trend_inserted} 条</p>
+                    )}
                   </div>
                   <div>
                     <p className="text-xs font-medium text-green-800 mb-1">当前数据库</p>
@@ -263,7 +250,7 @@ export default function DataImportPage() {
                 </div>
                 <div className="pt-2 border-t border-green-200">
                   <p className="text-xs text-green-600">
-                    数据库连接已自动重建。如发现数据异常，可在下方备份列表中找到旧数据。
+                    线上审核数据（is_ai_drama、题材标签）均已保留，未被覆盖。
                   </p>
                 </div>
               </div>
@@ -307,14 +294,18 @@ export default function DataImportPage() {
         </div>
 
         {/* Warning */}
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-          <p className="text-sm text-yellow-800 flex items-start gap-2">
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <p className="text-sm text-emerald-800 flex items-start gap-2">
             <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
             <span>
-              <strong>注意：</strong>如果导入后数据库连接出现异常（极少情况），
-              可以在服务器上执行 <code className="bg-yellow-100 px-1 rounded">pm2 restart dramatracker</code> 手动重启服务。
+              <strong>审核保护机制：</strong>以下字段在导入时永远不会被覆盖：
+              <code className="bg-emerald-100 px-1 rounded">is_ai_drama</code>、
+              <code className="bg-emerald-100 px-1 rounded">genre_tags_manual</code>、
+              <code className="bg-emerald-100 px-1 rounded">genre_tags_ai</code>、
+              <code className="bg-emerald-100 px-1 rounded">genre_source</code>。
+              可以放心上传本地抓取数据。
             </span>
           </p>
         </div>
