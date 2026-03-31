@@ -68,6 +68,7 @@ export async function GET(request: NextRequest) {
 
     const requiredDays = mode === '7days' ? 7 : mode === '30days' ? 30 : 1;
     const dataAccumulating = snapshotDays < requiredDays && mode !== 'today' && mode !== 'yesterday' && mode !== 'custom';
+    const minAppearances = mode === '7days' ? 2 : mode === '30days' ? 3 : 0;
 
     let dateFilter = '';
     const params: unknown[] = [];
@@ -119,6 +120,7 @@ export async function GET(request: NextRequest) {
         LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
         WHERE ${whereClause}
         GROUP BY rs.playlet_id, rs.platform
+        ${minAppearances > 0 ? `HAVING COUNT(DISTINCT rs.snapshot_date) >= ${minAppearances}` : ''}
         ORDER BY rank ASC
         LIMIT ?
       `;
@@ -136,18 +138,32 @@ export async function GET(request: NextRequest) {
       const dedupedRows = Array.from(dedupMap.values())
         .sort((a, b) => a.rank - b.rank);
 
-      // Get previous period data for rank change
-      // When accumulating data, always fall back to "previous snapshot day" comparison
       const effectiveMode = dataAccumulating ? 'today' : mode;
       const prevData = getPreviousPeriodRanks(db, platform, isAiDrama, effectiveMode, latestDate, startDate, endDate);
+      const firstAppearances = getFirstAppearances(db);
+      const periodStart = computePeriodStartDate(effectiveMode, latestDate, startDate);
+      const baselineDate = getBaselineDate(db, effectiveMode, latestDate, startDate, endDate);
+      const baselineHeatMap = baselineDate ? getHeatValuesOnDate(db, baselineDate, isAiDrama) : null;
 
       const enriched = dedupedRows.map((item) => {
         const prev = prevData.get(`${item.playlet_id}:${item.platform}`);
+        const firstDate = firstAppearances.get(item.playlet_id);
+        const isNew = !!firstDate && firstDate >= periodStart;
+
+        let heatIncrement: number | null = null;
+        if (!isNew && baselineHeatMap) {
+          const baseHeat = baselineHeatMap.get(`${item.playlet_id}:${item.platform}`);
+          if (baseHeat !== undefined) {
+            heatIncrement = item.heat_value - baseHeat;
+          }
+        }
+
         return {
           ...item,
           prev_rank: prev?.rank ?? null,
           rank_change: prev ? prev.rank - item.rank : null,
-          is_new: !prev,
+          is_new: isNew,
+          heat_increment: heatIncrement,
         };
       });
 
@@ -185,23 +201,39 @@ export async function GET(request: NextRequest) {
     `;
     const rawData = db.prepare(sql).all(...params) as RankingRow[];
 
-    // Get heat values from previous period for increment calculation
-    // When accumulating data, fall back to "previous snapshot day" for meaningful comparison
+    let filteredData = rawData;
+    if (minAppearances > 0) {
+      const dateCounts = new Map<string, Set<string>>();
+      for (const row of rawData) {
+        if (!dateCounts.has(row.playlet_id)) dateCounts.set(row.playlet_id, new Set());
+        dateCounts.get(row.playlet_id)!.add(row.snapshot_date);
+      }
+      filteredData = rawData.filter(row => (dateCounts.get(row.playlet_id)?.size ?? 0) >= minAppearances);
+    }
+
     const effectiveMode = dataAccumulating ? 'today' : mode;
-    const prevHeatMap = getPreviousHeatValues(db, isAiDrama, effectiveMode, latestDate, startDate, endDate);
+    const firstAppearances = getFirstAppearances(db);
+    const periodStart = computePeriodStartDate(effectiveMode, latestDate, startDate);
+    const baselineDate = getBaselineDate(db, effectiveMode, latestDate, startDate, endDate);
+    const baselineHeatMap = baselineDate ? getHeatValuesOnDate(db, baselineDate, isAiDrama) : null;
 
     // Deduplicate: keep the platform record with max heat increment for each drama
     const dramaMap = new Map<string, {
       item: RankingRow;
       platforms: { name: string; rank: number }[];
-      heatIncrement: number;
+      heatIncrement: number | null;
       maxHeatValue: number;
       bestPlatform: string;
     }>();
 
-    for (const row of rawData) {
-      const prevHeat = prevHeatMap.get(`${row.playlet_id}:${row.platform}`) || 0;
-      const increment = row.heat_value - prevHeat;
+    for (const row of filteredData) {
+      let increment: number | null = null;
+      if (baselineHeatMap) {
+        const baseHeat = baselineHeatMap.get(`${row.playlet_id}:${row.platform}`);
+        if (baseHeat !== undefined) {
+          increment = row.heat_value - baseHeat;
+        }
+      }
 
       const dramaKey = getDramaDedupeKey(row.title, row.language, row.first_air_date);
       const existing = dramaMap.get(dramaKey);
@@ -220,7 +252,9 @@ export async function GET(request: NextRequest) {
         if (row.heat_value > existing.maxHeatValue) {
           existing.maxHeatValue = row.heat_value;
         }
-        if (increment > existing.heatIncrement) {
+        const existingInc = existing.heatIncrement ?? -Infinity;
+        const newInc = increment ?? -Infinity;
+        if (newInc > existingInc) {
           existing.heatIncrement = increment;
           existing.item = row;
           existing.bestPlatform = row.platform;
@@ -228,9 +262,15 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Sort by heat increment descending
+    // Sort: valid increments first (desc), then nulls (by heat value desc)
     const sorted = Array.from(dramaMap.values())
-      .sort((a, b) => b.heatIncrement - a.heatIncrement)
+      .sort((a, b) => {
+        const ai = a.heatIncrement, bi = b.heatIncrement;
+        if (ai !== null && bi !== null) return bi - ai;
+        if (ai !== null) return -1;
+        if (bi !== null) return 1;
+        return b.maxHeatValue - a.maxHeatValue;
+      })
       .slice(0, limit);
 
     const prevRankMap = getPreviousPeriodOverallRanks(db, isAiDrama, effectiveMode, latestDate, startDate, endDate);
@@ -242,14 +282,17 @@ export async function GET(request: NextRequest) {
     const result = sorted.map((entry, index) => {
       const newRank = index + 1;
       const prevRank = prevRankMap.get(entry.item.playlet_id);
+      const firstDate = firstAppearances.get(entry.item.playlet_id);
+      const isNew = !!firstDate && firstDate >= periodStart;
+
       return {
         ...entry.item,
         rank: newRank,
         orig_rank: entry.item.rank,
         prev_rank: prevRank ?? null,
         rank_change: prevRank ? prevRank - newRank : null,
-        is_new: !prevRank,
-        heat_increment: entry.heatIncrement,
+        is_new: isNew,
+        heat_increment: isNew ? null : entry.heatIncrement,
         current_heat_value: entry.maxHeatValue,
         platforms_list: entry.platforms,
         best_platform: entry.bestPlatform,
@@ -447,6 +490,84 @@ function getInvestTrendSparklines(
         map.set(pid, filtered.slice(-14));
       }
     }
+  } catch { /* empty */ }
+  return map;
+}
+
+function computePeriodStartDate(mode: string, latestDate: string, startDate: string): string {
+  if (mode === 'today') return latestDate;
+  const d = new Date(latestDate + 'T00:00:00Z');
+  if (mode === 'yesterday') { d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); }
+  if (mode === '7days') { d.setUTCDate(d.getUTCDate() - 6); return d.toISOString().slice(0, 10); }
+  if (mode === '30days') { d.setUTCDate(d.getUTCDate() - 29); return d.toISOString().slice(0, 10); }
+  return startDate || latestDate;
+}
+
+function getFirstAppearances(db: ReturnType<typeof getDb>): Map<string, string> {
+  const map = new Map<string, string>();
+  try {
+    const rows = db.prepare(
+      'SELECT playlet_id, MIN(snapshot_date) as first_date FROM ranking_snapshot GROUP BY playlet_id'
+    ).all() as { playlet_id: string; first_date: string }[];
+    for (const row of rows) map.set(row.playlet_id, row.first_date);
+  } catch { /* empty */ }
+  return map;
+}
+
+function getBaselineDate(
+  db: ReturnType<typeof getDb>,
+  mode: string,
+  latestDate: string,
+  startDate: string,
+  endDate: string,
+): string | null {
+  let sql = '';
+  const params: unknown[] = [];
+
+  if (mode === 'today') {
+    sql = "SELECT snapshot_date as d FROM ranking_snapshot WHERE snapshot_date = date(?, '-1 day') LIMIT 1";
+    params.push(latestDate);
+  } else if (mode === 'yesterday') {
+    sql = "SELECT snapshot_date as d FROM ranking_snapshot WHERE snapshot_date = date(?, '-2 days') LIMIT 1";
+    params.push(latestDate);
+  } else if (mode === '7days') {
+    sql = "SELECT MAX(snapshot_date) as d FROM ranking_snapshot WHERE snapshot_date <= date(?, '-7 days') AND snapshot_date >= date(?, '-10 days')";
+    params.push(latestDate, latestDate);
+  } else if (mode === '30days') {
+    sql = "SELECT MAX(snapshot_date) as d FROM ranking_snapshot WHERE snapshot_date <= date(?, '-30 days') AND snapshot_date >= date(?, '-34 days')";
+    params.push(latestDate, latestDate);
+  } else if (mode === 'custom' && startDate && endDate) {
+    sql = "SELECT MAX(snapshot_date) as d FROM ranking_snapshot WHERE snapshot_date < ? AND snapshot_date >= date(?, '-4 days')";
+    params.push(startDate, startDate);
+  } else {
+    return null;
+  }
+
+  try {
+    const row = db.prepare(sql).get(...params) as { d: string | null } | undefined;
+    return row?.d || null;
+  } catch { return null; }
+}
+
+function getHeatValuesOnDate(
+  db: ReturnType<typeof getDb>,
+  baselineDate: string,
+  isAiDrama: string,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  const params: unknown[] = [baselineDate];
+  let where = 'rs.snapshot_date = ?';
+  if (isAiDrama) { where += ' AND d.is_ai_drama = ?'; params.push(isAiDrama); }
+
+  try {
+    const rows = db.prepare(`
+      SELECT rs.playlet_id, rs.platform, MAX(rs.heat_value) as heat_value
+      FROM ranking_snapshot rs
+      LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
+      WHERE ${where}
+      GROUP BY rs.playlet_id, rs.platform
+    `).all(...params) as { playlet_id: string; platform: string; heat_value: number }[];
+    for (const row of rows) map.set(`${row.playlet_id}:${row.platform}`, row.heat_value);
   } catch { /* empty */ }
   return map;
 }

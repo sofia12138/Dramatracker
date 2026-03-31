@@ -80,6 +80,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const firstAppearanceMap = new Map<string, string>();
+    const faRows = db.prepare(
+      'SELECT playlet_id, MIN(snapshot_date) as first_date FROM ranking_snapshot GROUP BY playlet_id'
+    ).all() as { playlet_id: string; first_date: string }[];
+    for (const r of faRows) firstAppearanceMap.set(r.playlet_id, r.first_date);
+
     const queryTop20 = (typeFilter: string): CompactDrama[] => {
       const rawList = db.prepare(`
         SELECT d.title, rs.platform, rs.rank, rs.heat_value,
@@ -101,16 +107,13 @@ export async function POST(request: NextRequest) {
         seen.add(key);
 
         const prevRank = prevRankMap.get(key);
-        const prevHeat = prevHeatMap.get(key) || 0;
-        const isNew = prevRank === undefined;
-        const heatIncrement = row.heat_value - prevHeat;
+        const prevHeat = prevHeatMap.get(key);
+        const isNew = firstAppearanceMap.get(row.playlet_id) === latestDate;
 
         let rankChange = '-';
         if (isNew) rankChange = 'NEW';
-        else if (prevRank! < row.rank) rankChange = `↓${row.rank - prevRank!}`;
-        else if (prevRank! > row.rank) rankChange = `↑${prevRank! - row.rank}`;
-
-        const rankUp = isNew ? 0 : (prevRank! > row.rank ? prevRank! - row.rank : 0);
+        else if (prevRank !== undefined && prevRank < row.rank) rankChange = `↓${row.rank - prevRank}`;
+        else if (prevRank !== undefined && prevRank > row.rank) rankChange = `↑${prevRank - row.rank}`;
 
         let tags: string[] = [];
         try { tags = JSON.parse(row.tags || '[]'); } catch { /* ignore */ }
@@ -123,14 +126,12 @@ export async function POST(request: NextRequest) {
           language: row.language || 'Unknown',
           tags: tags.slice(0, 3),
           rank_change: rankChange,
-          heat_increment: heatIncrement,
+          heat_increment: (!isNew && prevHeat !== undefined) ? row.heat_value - prevHeat : 0,
           material_count: row.material_count || 0,
           invest_days: row.invest_days || 0,
           is_new: isNew,
           is_hot_candidate: false,
         });
-
-        void rankUp;
       }
 
       return result;
