@@ -2,11 +2,34 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 import { getAIClient, getAIModel } from '@/lib/ai';
-import { cleanTags, getTagSource, PRESET_GENRE_TAGS } from '@/lib/tags';
+import { getMergedTagSystem, getMergedAllTags } from '@/constants/tag-system';
+import { PRESET_GENRE_TAGS } from '@/lib/tags';
+import {
+  normalizeSystemTags,
+  normalizeCustomTags,
+  validateSystemTags,
+  isEmptyTags,
+  getTagSourceCompat,
+  parseManualTags,
+} from '@/lib/tag-utils';
 
 export const dynamic = 'force-dynamic';
 
-const GENRE_TAGS = PRESET_GENRE_TAGS;
+function loadMergedSystem(db: ReturnType<typeof getDb>) {
+  const extraRows = db.prepare('SELECT category, tag_name FROM tag_system_extra').all() as { category: string; tag_name: string }[];
+  return getMergedTagSystem(extraRows);
+}
+
+export async function GET() {
+  try {
+    const db = getDb();
+    const merged = loadMergedSystem(db);
+    return NextResponse.json({ success: true, data: merged });
+  } catch {
+    const { TAG_SYSTEM } = await import('@/constants/tag-system');
+    return NextResponse.json({ success: true, data: TAG_SYSTEM });
+  }
+}
 
 export async function PATCH(request: NextRequest) {
   const auth = checkPermission(request, 'review_drama');
@@ -14,35 +37,82 @@ export async function PATCH(request: NextRequest) {
 
   try {
     const db = getDb();
-    const { drama_id, genre_tags_manual } = await request.json();
+    const body = await request.json();
 
-    if (!drama_id || !Array.isArray(genre_tags_manual)) {
-      return NextResponse.json({ error: 'drama_id and genre_tags_manual[] required' }, { status: 400 });
+    const dramaId = body.drama_id ?? body.id;
+    if (!dramaId) {
+      return NextResponse.json({ error: 'drama_id required' }, { status: 400 });
     }
 
-    const cleaned = cleanTags(genre_tags_manual);
-    const tagsJson = cleaned.length > 0 ? JSON.stringify(cleaned) : null;
+    const rawSystemTags = body.systemTags ?? {};
+    const rawCustomTags = body.customTags ?? [];
+
+    if (typeof rawSystemTags !== 'object' || Array.isArray(rawSystemTags)) {
+      return NextResponse.json({ error: 'systemTags must be an object' }, { status: 400 });
+    }
+    if (!Array.isArray(rawCustomTags)) {
+      return NextResponse.json({ error: 'customTags must be an array' }, { status: 400 });
+    }
+
+    const merged = loadMergedSystem(db);
+    const mergedAll = getMergedAllTags(merged);
+
+    const systemTags = normalizeSystemTags(rawSystemTags, merged);
+    const customTags = normalizeCustomTags(rawCustomTags, mergedAll);
+
+    const { valid, errors } = validateSystemTags(systemTags, merged);
+    if (!valid) {
+      return NextResponse.json({ error: '标签校验失败', details: errors }, { status: 400 });
+    }
+
+    const data = { systemTags, customTags };
+    const empty = isEmptyTags(data);
+    const tagsJson = empty ? null : JSON.stringify(data);
 
     let source: string | null;
-    if (cleaned.length > 0) {
+    if (!empty) {
       source = 'manual';
     } else {
-      const row = db.prepare('SELECT genre_tags_ai, tags FROM drama WHERE id = ?').get(drama_id) as
+      const row = db.prepare('SELECT genre_tags_ai, tags FROM drama WHERE id = ?').get(dramaId) as
         { genre_tags_ai: string | null; tags: string | null } | undefined;
-      source = row ? getTagSource(null, row.genre_tags_ai, row.tags) : null;
+      source = row ? getTagSourceCompat(null, row.genre_tags_ai, row.tags) : null;
       if (source === 'none') source = null;
     }
 
     const result = db.prepare(
       `UPDATE drama SET genre_tags_manual = ?, genre_source = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(tagsJson, source, drama_id);
+    ).run(tagsJson, source, dramaId);
 
-    console.log(`[genre] save manual tags drama_id=${drama_id} tags=${tagsJson} changes=${result.changes}`);
+    console.log(`[genre] save manual tags drama_id=${dramaId} tags=${tagsJson} changes=${result.changes}`);
 
     if (result.changes === 0) {
-      return NextResponse.json({ error: `未找到 id=${drama_id} 的剧集` }, { status: 404 });
+      return NextResponse.json({ error: `未找到 id=${dramaId} 的剧集` }, { status: 404 });
     }
-    return NextResponse.json({ success: true, tags: cleaned, changes: result.changes });
+
+    let candidateTags: { tag_name: string; usage_count: number; isNewCandidate: boolean }[] = [];
+    if (customTags.length > 0) {
+      try {
+        const allRows = db.prepare(
+          `SELECT genre_tags_manual FROM drama WHERE genre_tags_manual IS NOT NULL AND genre_tags_manual != ''`
+        ).all() as { genre_tags_manual: string }[];
+        const counts = new Map<string, number>();
+        for (const row of allRows) {
+          const parsed = parseManualTags(row.genre_tags_manual);
+          for (const ct of parsed.customTags) {
+            counts.set(ct, (counts.get(ct) || 0) + 1);
+          }
+        }
+        candidateTags = customTags
+          .filter(t => (counts.get(t) || 0) >= 1)
+          .map(t => ({
+            tag_name: t,
+            usage_count: counts.get(t) || 0,
+            isNewCandidate: (counts.get(t) || 0) >= 3,
+          }));
+      } catch { /* non-critical */ }
+    }
+
+    return NextResponse.json({ success: true, data, changes: result.changes, candidateTags });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -88,7 +158,7 @@ export async function POST(request: NextRequest) {
 
     const prompt = `你是海外短剧题材分析专家。请为以下短剧识别题材标签。
 
-可选标签：${GENRE_TAGS.join('、')}
+可选标签：${PRESET_GENRE_TAGS.join('、')}
 
 每部剧选1-3个最匹配的标签。严格输出JSON数组，格式：
 [{"id":1,"tags":["情感","复仇"]},...]
@@ -113,9 +183,9 @@ ${dramas.map(d => `- id:${d.id} 标题:${d.title} 简介:${d.description || '无
       );
       const tx = db.transaction((items: { id: number; tags: string[] }[]) => {
         for (const item of items) {
-          const valid = item.tags.filter(t => GENRE_TAGS.includes(t));
-          if (valid.length > 0) {
-            updateStmt.run(JSON.stringify(valid), item.id);
+          const validTags = item.tags.filter(t => PRESET_GENRE_TAGS.includes(t));
+          if (validTags.length > 0) {
+            updateStmt.run(JSON.stringify(validTags), item.id);
             processed++;
           }
         }
@@ -128,8 +198,4 @@ ${dramas.map(d => `- id:${d.id} 标题:${d.title} 简介:${d.description || '无
     const msg = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
-
-export async function GET() {
-  return NextResponse.json({ tags: GENRE_TAGS });
 }

@@ -178,6 +178,7 @@ function initDb(db: Database.Database) {
   `);
 
   migrateGenreColumns(db);
+  migrateTagSystemExtra(db);
   seedData(db);
 }
 
@@ -197,6 +198,18 @@ function migrateGenreColumns(db: Database.Database) {
   db.exec(`
     UPDATE drama SET genre_tags_ai = tags, genre_source = 'scraped'
     WHERE genre_tags_ai IS NULL AND tags IS NOT NULL AND tags != '[]' AND tags != ''
+  `);
+}
+
+function migrateTagSystemExtra(db: Database.Database) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tag_system_extra (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category TEXT NOT NULL,
+      tag_name TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(category, tag_name)
+    )
   `);
 }
 

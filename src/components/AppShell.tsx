@@ -11,6 +11,7 @@ const NAV_PERMS: Record<string, string[]> = {
   '/review': ['review_drama'],
   '/play-count': ['manage_play_count'],
   '/data-manage': ['manage_data'],
+  '/tag-manage': ['manage_settings'],
   '/users': ['manage_users'],
   '/settings': ['manage_settings'],
 };

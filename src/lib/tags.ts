@@ -8,8 +8,24 @@ export const PRESET_GENRE_TAGS = [
 export function parseTags(raw: string | null | undefined): string[] {
   if (!raw) return [];
   try {
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === 'string');
+    if (typeof parsed === 'object' && parsed !== null) {
+      if ('systemTags' in parsed || 'customTags' in parsed) {
+        const result: string[] = [];
+        const st = parsed.systemTags;
+        if (st && typeof st === 'object' && !Array.isArray(st)) {
+          for (const arr of Object.values(st)) {
+            if (Array.isArray(arr)) for (const v of arr) if (typeof v === 'string') result.push(v);
+          }
+        }
+        const ct = parsed.customTags;
+        if (Array.isArray(ct)) for (const v of ct) if (typeof v === 'string') result.push(v);
+        return result;
+      }
+      return Object.values(parsed).flat().filter((v): v is string => typeof v === 'string');
+    }
+    return [];
   } catch {
     return [];
   }

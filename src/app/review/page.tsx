@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { apiFetch } from '@/lib/fetch';
+import { parseTagsCompat, getTagSourceCompat } from '@/lib/tag-utils';
+import TagSelector from '@/components/TagSelector';
 
 interface Drama {
   id: number;
@@ -62,13 +64,12 @@ const TYPE_LABELS: Record<string, string> = {
   real: '真人剧',
 };
 
-const GENRE_TAGS = ['情感', '狼人', '复仇', '豪门', '穿越', '逆袭', '悬疑', '家庭', '甜宠', '都市'];
-
 function getGenreTags(drama: Drama): string[] {
-  const manual = drama.genre_tags_manual;
-  const ai = drama.genre_tags_ai;
-  const raw = manual || ai || drama.tags;
-  try { return JSON.parse(raw || '[]'); } catch { return []; }
+  const manual = parseTagsCompat(drama.genre_tags_manual);
+  if (manual.length > 0) return manual;
+  const ai = parseTagsCompat(drama.genre_tags_ai);
+  if (ai.length > 0) return ai;
+  return parseTagsCompat(drama.tags);
 }
 
 function getScrapeStatusConfig(status?: string) {
@@ -120,8 +121,6 @@ export default function ReviewPage() {
   const [scrapeStatus, setScrapeStatus] = useState<ScrapeStatus | null>(null);
   const [scraping, setScraping] = useState(false);
   const [editingGenre, setEditingGenre] = useState<number | null>(null);
-  const [genreSelection, setGenreSelection] = useState<Set<string>>(new Set());
-  const [savingGenre, setSavingGenre] = useState(false);
   const [aiGenreRunning, setAiGenreRunning] = useState(false);
   const toastId = useRef(0);
   const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
@@ -366,40 +365,18 @@ export default function ReviewPage() {
   };
 
   const openGenreEditor = (drama: Drama) => {
-    const current = getGenreTags(drama);
-    setGenreSelection(new Set(current));
     setEditingGenre(drama.id);
   };
 
-  const toggleGenreTag = (tag: string) => {
-    setGenreSelection(prev => {
-      const s = new Set(prev);
-      if (s.has(tag)) s.delete(tag); else s.add(tag);
-      return s;
-    });
-  };
-
-  const saveGenreTags = async () => {
-    if (editingGenre === null) return;
-    setSavingGenre(true);
-    try {
-      const res = await apiFetch('/api/drama/genre', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ drama_id: editingGenre, genre_tags_manual: Array.from(genreSelection) }),
-      });
-      if (res.ok) {
-        setDramas(prev => prev.map(d =>
-          d.id === editingGenre
-            ? { ...d, genre_tags_manual: JSON.stringify(Array.from(genreSelection)), genre_source: 'manual' }
-            : d
-        ));
-        showToast('题材标签已保存');
-      } else {
-        showToast('保存失败', 'error');
-      }
-    } catch { showToast('网络异常', 'error'); }
-    setSavingGenre(false);
+  const handleGenreSaved = (newTagsJson: string | null) => {
+    if (editingGenre !== null) {
+      setDramas(prev => prev.map(d =>
+        d.id === editingGenre
+          ? { ...d, genre_tags_manual: newTagsJson, genre_source: newTagsJson ? 'manual' : getTagSourceCompat(null, d.genre_tags_ai, d.tags) }
+          : d
+      ));
+      showToast('题材标签已保存');
+    }
     setEditingGenre(null);
   };
 
@@ -498,45 +475,27 @@ export default function ReviewPage() {
       )}
 
       {/* Genre Editor Modal */}
-      {editingGenre !== null && (
-        <>
-          <div className="fixed inset-0 bg-black/30 z-50" onClick={() => setEditingGenre(null)} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-primary-card rounded-xl shadow-2xl p-5 w-[340px] border border-primary-border">
-            <h3 className="text-sm font-semibold text-primary-text mb-1">编辑题材标签</h3>
-            <p className="text-[11px] text-primary-text-muted mb-3">
-              {dramas.find(d => d.id === editingGenre)?.title}
-            </p>
-            <div className="flex flex-wrap gap-1.5 mb-4">
-              {GENRE_TAGS.map(tag => (
-                <button
-                  key={tag}
-                  onClick={() => toggleGenreTag(tag)}
-                  className={`px-2.5 py-1 text-xs rounded-lg border transition-all ${
-                    genreSelection.has(tag)
-                      ? 'bg-orange-500 text-white border-orange-500 font-medium'
-                      : 'bg-white text-primary-text-secondary border-primary-border hover:border-orange-300'
-                  }`}
-                >
-                  {tag}
-                </button>
-              ))}
+      {editingGenre !== null && (() => {
+        const drama = dramas.find(d => d.id === editingGenre);
+        if (!drama) return null;
+        return (
+          <>
+            <div className="fixed inset-0 bg-black/30 z-50" onClick={() => setEditingGenre(null)} />
+            <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-primary-card rounded-xl shadow-2xl p-5 w-[480px] max-h-[80vh] overflow-y-auto border border-primary-border">
+              <h3 className="text-sm font-semibold text-primary-text mb-1">编辑题材标签</h3>
+              <p className="text-[11px] text-primary-text-muted mb-3">{drama.title}</p>
+              <TagSelector
+                dramaId={drama.id}
+                genreTagsManual={drama.genre_tags_manual}
+                genreTagsAi={drama.genre_tags_ai}
+                scrapedTags={drama.tags}
+                onSaved={handleGenreSaved}
+                onCancel={() => setEditingGenre(null)}
+              />
             </div>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setEditingGenre(null)}
-                className="px-3 py-1.5 text-xs border border-primary-border rounded-lg hover:bg-primary-sidebar transition-colors">
-                取消
-              </button>
-              <button
-                onClick={saveGenreTags}
-                disabled={savingGenre}
-                className="px-3 py-1.5 text-xs font-medium bg-primary-accent text-white rounded-lg hover:opacity-90 disabled:opacity-50"
-              >
-                {savingGenre ? '保存中...' : '保存'}
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+          </>
+        );
+      })()}
 
       {/* Header */}
       <div className="flex items-center justify-between">
