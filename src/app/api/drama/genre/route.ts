@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 import { getAIClient, getAIModel } from '@/lib/ai';
+import { cleanTags, getTagSource, PRESET_GENRE_TAGS } from '@/lib/tags';
 
 export const dynamic = 'force-dynamic';
 
-const GENRE_TAGS = ['情感', '狼人', '复仇', '豪门', '穿越', '逆袭', '悬疑', '家庭', '甜宠', '都市'];
+const GENRE_TAGS = PRESET_GENRE_TAGS;
 
 export async function PATCH(request: NextRequest) {
   const auth = checkPermission(request, 'review_drama');
@@ -19,17 +20,29 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'drama_id and genre_tags_manual[] required' }, { status: 400 });
     }
 
-    const valid = genre_tags_manual.filter((t: string) => GENRE_TAGS.includes(t));
-    const result = db.prepare(
-      `UPDATE drama SET genre_tags_manual = ?, genre_source = 'manual', updated_at = datetime('now') WHERE id = ?`
-    ).run(JSON.stringify(valid), drama_id);
+    const cleaned = cleanTags(genre_tags_manual);
+    const tagsJson = cleaned.length > 0 ? JSON.stringify(cleaned) : null;
 
-    console.log(`[genre] save manual tags drama_id=${drama_id} tags=${JSON.stringify(valid)} changes=${result.changes}`);
+    let source: string | null;
+    if (cleaned.length > 0) {
+      source = 'manual';
+    } else {
+      const row = db.prepare('SELECT genre_tags_ai, tags FROM drama WHERE id = ?').get(drama_id) as
+        { genre_tags_ai: string | null; tags: string | null } | undefined;
+      source = row ? getTagSource(null, row.genre_tags_ai, row.tags) : null;
+      if (source === 'none') source = null;
+    }
+
+    const result = db.prepare(
+      `UPDATE drama SET genre_tags_manual = ?, genre_source = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(tagsJson, source, drama_id);
+
+    console.log(`[genre] save manual tags drama_id=${drama_id} tags=${tagsJson} changes=${result.changes}`);
 
     if (result.changes === 0) {
       return NextResponse.json({ error: `未找到 id=${drama_id} 的剧集` }, { status: 404 });
     }
-    return NextResponse.json({ success: true, tags: valid, changes: result.changes });
+    return NextResponse.json({ success: true, tags: cleaned, changes: result.changes });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: msg }, { status: 500 });

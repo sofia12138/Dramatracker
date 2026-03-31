@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAIStream } from '@/hooks/useAIStream';
 import AIMarkdown from './AIMarkdown';
 import { apiFetch } from '@/lib/fetch';
+import { parseTags, cleanTags, getFinalTags, getTagSource, PRESET_GENRE_TAGS } from '@/lib/tags';
 
 interface Drama {
   id: number;
@@ -17,6 +18,9 @@ interface Drama {
   first_air_date: string;
   is_ai_drama: string;
   tags: string;
+  genre_tags_ai: string | null;
+  genre_tags_manual: string | null;
+  genre_source: string | null;
   creative_count: number;
 }
 
@@ -48,6 +52,10 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [editingDesc, setEditingDesc] = useState(false);
   const [descText, setDescText] = useState('');
+  const [editingTags, setEditingTags] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [savingTags, setSavingTags] = useState(false);
   const [playCountData, setPlayCountData] = useState<PlayCountPoint[]>([]);
   const investChartRef = useRef<HTMLDivElement>(null);
   const heatChartRef = useRef<HTMLDivElement>(null);
@@ -221,8 +229,89 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
     setEditingDesc(false);
   };
 
-  const parseTags = (tags: string) => {
-    try { return JSON.parse(tags || '[]'); } catch { return []; }
+  const handleStartEditTags = () => {
+    if (!data?.drama) return;
+    const current = getFinalTags(data.drama.genre_tags_manual, data.drama.genre_tags_ai, data.drama.tags);
+    setSelectedTags([...current]);
+    setTagInput('');
+    setEditingTags(true);
+  };
+
+  const handleAddCustomTag = () => {
+    const trimmed = tagInput.trim();
+    if (!trimmed) return;
+    const cleaned = cleanTags([...selectedTags, trimmed]);
+    setSelectedTags(cleaned);
+    setTagInput('');
+  };
+
+  const handleTogglePreset = (tag: string) => {
+    if (selectedTags.includes(tag)) {
+      setSelectedTags(selectedTags.filter(t => t !== tag));
+    } else if (selectedTags.length < 10) {
+      setSelectedTags([...selectedTags, tag]);
+    }
+  };
+
+  const handleRemoveTag = (tag: string) => {
+    setSelectedTags(selectedTags.filter(t => t !== tag));
+  };
+
+  const handleSaveTags = async () => {
+    if (!data?.drama) return;
+    setSavingTags(true);
+    try {
+      const res = await apiFetch('/api/drama/genre', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ drama_id: data.drama.id, genre_tags_manual: selectedTags }),
+      });
+      const result = await res.json();
+      if (result.success) {
+        setData(prev => prev ? {
+          ...prev,
+          drama: prev.drama ? {
+            ...prev.drama,
+            genre_tags_manual: result.tags.length > 0 ? JSON.stringify(result.tags) : null,
+            genre_source: result.tags.length > 0 ? 'manual' : prev.drama.genre_source,
+          } : null,
+        } : null);
+        setEditingTags(false);
+      }
+    } finally {
+      setSavingTags(false);
+    }
+  };
+
+  const handleClearManualTags = async () => {
+    if (!data?.drama) return;
+    setSavingTags(true);
+    try {
+      const res = await apiFetch('/api/drama/genre', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ drama_id: data.drama.id, genre_tags_manual: [] }),
+      });
+      const result = await res.json();
+      if (result.success) {
+        setData(prev => {
+          if (!prev?.drama) return prev;
+          const d = prev.drama;
+          const fallbackSource = getTagSource(null, d.genre_tags_ai, d.tags);
+          return {
+            ...prev,
+            drama: {
+              ...d,
+              genre_tags_manual: null,
+              genre_source: fallbackSource === 'none' ? null : fallbackSource,
+            },
+          };
+        });
+        setEditingTags(false);
+      }
+    } finally {
+      setSavingTags(false);
+    }
   };
 
   if (!playletId) return null;
@@ -275,14 +364,146 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
                   {data.drama.creative_count > 0 && (
                     <p className="text-sm text-primary-text-secondary">投放计划: {data.drama.creative_count}</p>
                   )}
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {parseTags(data.drama.tags).map((tag: string, i: number) => (
-                      <span key={i} className="px-2 py-0.5 bg-orange-50 text-orange-600 text-xs rounded-full border border-orange-200">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
                 </div>
+              </div>
+
+              {/* Genre Tags Editor */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-primary-text">题材标签</h3>
+                  {!editingTags ? (
+                    <button
+                      onClick={handleStartEditTags}
+                      className="flex items-center gap-1 text-xs text-primary-accent hover:underline"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                      编辑
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      {parseTags(data.drama.genre_tags_manual).length > 0 && (
+                        <button
+                          onClick={handleClearManualTags}
+                          disabled={savingTags}
+                          className="text-xs text-red-500 hover:underline disabled:opacity-50"
+                        >
+                          清除人工标签
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setEditingTags(false)}
+                        className="text-xs text-primary-text-muted hover:underline"
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={handleSaveTags}
+                        disabled={savingTags}
+                        className="flex items-center gap-1 text-xs text-primary-accent hover:underline disabled:opacity-50"
+                      >
+                        {savingTags ? '保存中...' : '保存'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {editingTags ? (
+                  <div className="space-y-3 p-3 border border-primary-border rounded-lg bg-primary-sidebar/30">
+                    {/* Selected tags */}
+                    <div>
+                      <p className="text-xs text-primary-text-muted mb-1.5">已选标签 ({selectedTags.length}/10)</p>
+                      <div className="flex flex-wrap gap-1.5 min-h-[28px]">
+                        {selectedTags.length > 0 ? selectedTags.map((tag, i) => (
+                          <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary-accent-bg text-primary-accent text-xs rounded-full border border-primary-accent-border">
+                            {tag}
+                            <button onClick={() => handleRemoveTag(tag)} className="hover:text-red-500 transition-colors">
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </span>
+                        )) : (
+                          <span className="text-xs text-primary-text-muted">点击下方预设或输入自定义标签</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Preset tags */}
+                    <div>
+                      <p className="text-xs text-primary-text-muted mb-1.5">预设标签</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {PRESET_GENRE_TAGS.map(tag => {
+                          const active = selectedTags.includes(tag);
+                          return (
+                            <button
+                              key={tag}
+                              onClick={() => handleTogglePreset(tag)}
+                              className={`px-2 py-0.5 text-xs rounded-full border transition-colors ${
+                                active
+                                  ? 'bg-primary-accent text-white border-primary-accent'
+                                  : 'bg-white text-primary-text-secondary border-primary-border hover:border-primary-accent hover:text-primary-accent'
+                              }`}
+                            >
+                              {tag}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Custom input */}
+                    <div>
+                      <p className="text-xs text-primary-text-muted mb-1.5">自定义标签</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={tagInput}
+                          onChange={e => setTagInput(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustomTag(); } }}
+                          placeholder="输入标签，回车添加"
+                          maxLength={10}
+                          className="flex-1 px-2.5 py-1.5 border border-primary-border rounded-lg text-xs bg-white focus:outline-none focus:border-primary-accent"
+                        />
+                        <button
+                          onClick={handleAddCustomTag}
+                          disabled={!tagInput.trim() || selectedTags.length >= 10}
+                          className="px-3 py-1.5 text-xs bg-primary-accent text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+                        >
+                          添加
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  (() => {
+                    const d = data.drama!;
+                    const finalTags = getFinalTags(d.genre_tags_manual, d.genre_tags_ai, d.tags);
+                    const source = getTagSource(d.genre_tags_manual, d.genre_tags_ai, d.tags);
+                    const sourceLabel = { manual: '人工标注', ai: 'AI识别', scraped: '抓取', none: '' }[source];
+                    const sourceColor = {
+                      manual: 'bg-blue-50 text-blue-600 border-blue-200',
+                      ai: 'bg-purple-50 text-purple-500 border-purple-200',
+                      scraped: 'bg-gray-50 text-gray-400 border-gray-200',
+                      none: '',
+                    }[source];
+                    return (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {finalTags.length > 0 ? finalTags.map((tag: string, i: number) => (
+                          <span key={i} className="px-2 py-0.5 bg-orange-50 text-orange-600 text-xs rounded-full border border-orange-200">
+                            {tag}
+                          </span>
+                        )) : (
+                          <span className="text-xs text-primary-text-muted">暂无题材标签</span>
+                        )}
+                        {sourceLabel && (
+                          <span className={`px-1.5 py-0.5 text-[10px] rounded-full border ${sourceColor}`}>{sourceLabel}</span>
+                        )}
+                      </div>
+                    );
+                  })()
+                )}
               </div>
 
               {/* Description */}

@@ -195,6 +195,7 @@ export async function GET(request: NextRequest) {
       item: RankingRow;
       platforms: { name: string; rank: number }[];
       heatIncrement: number;
+      maxHeatValue: number;
       bestPlatform: string;
     }>();
 
@@ -209,11 +210,15 @@ export async function GET(request: NextRequest) {
           item: row,
           platforms: [{ name: row.platform, rank: row.rank }],
           heatIncrement: increment,
+          maxHeatValue: row.heat_value,
           bestPlatform: row.platform,
         });
       } else {
         if (!existing.platforms.some(p => p.name === row.platform)) {
           existing.platforms.push({ name: row.platform, rank: row.rank });
+        }
+        if (row.heat_value > existing.maxHeatValue) {
+          existing.maxHeatValue = row.heat_value;
         }
         if (increment > existing.heatIncrement) {
           existing.heatIncrement = increment;
@@ -245,6 +250,7 @@ export async function GET(request: NextRequest) {
         rank_change: prevRank ? prevRank - newRank : null,
         is_new: !prevRank,
         heat_increment: entry.heatIncrement,
+        current_heat_value: entry.maxHeatValue,
         platforms_list: entry.platforms,
         best_platform: entry.bestPlatform,
         sparkline: sparklines.get(entry.item.playlet_id) || [],

@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
+import { lockDbForScraper, unlockDbAfterScraper } from '@/lib/db';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
 
@@ -75,6 +76,8 @@ export async function POST(request: NextRequest) {
       const isWin = process.platform === 'win32';
       if (!isWin) pythonCmd = 'python3';
 
+      lockDbForScraper();
+      send(`[系统] 已锁定数据库连接\n`);
       send(`[系统] 启动脚本: ${pythonCmd} ${args.join(' ')}\n`);
       send(`[系统] 脚本路径: ${scriptPath}\n`);
 
@@ -100,6 +103,7 @@ export async function POST(request: NextRequest) {
       });
 
       child.on('error', (err) => {
+        unlockDbAfterScraper();
         send(`[错误] 无法启动 Python: ${err.message}\n`);
         send(`[提示] 请确保 Python 已安装并在 PATH 中\n`);
         updateConfigField('last_auto_fetch_status', 'failed');
@@ -107,6 +111,7 @@ export async function POST(request: NextRequest) {
       });
 
       child.on('close', async (code) => {
+        unlockDbAfterScraper();
         send(`\n[系统] 脚本执行完毕，退出码: ${code}\n`);
         if (code === 0) {
           updateConfigField('last_auto_fetch_success_at', new Date().toISOString());

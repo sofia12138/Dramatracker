@@ -16,6 +16,7 @@ interface RankingItem {
   is_new: boolean;
   heat_value: number;
   heat_increment?: number;
+  current_heat_value?: number;
   material_count: number;
   invest_days: number;
   snapshot_date: string;
@@ -315,9 +316,10 @@ export default function RankingTable({ type, title }: Props) {
                   {isOverall && <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-32">平台</th>}
                   <th className="text-left py-3 px-2 font-medium text-primary-text-secondary w-20">上线日期</th>
                   <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20 whitespace-nowrap">投放时长</th>
-                  <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">
-                    {isOverall ? '热力增量' : '累计热力值'}
-                  </th>
+                  <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">累计热力值</th>
+                  {isOverall && (
+                    <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">热力增量</th>
+                  )}
                   <th className="text-right py-3 px-2 font-medium text-primary-text-secondary w-20">播放量</th>
                   <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20">投放趋势</th>
                   <th className="text-center py-3 px-3 font-medium text-primary-text-secondary w-16">操作</th>
@@ -451,20 +453,23 @@ export default function RankingTable({ type, title }: Props) {
                         </span>
                       </td>
 
-                      {/* Heat Value / Increment */}
+                      {/* Heat Value */}
                       <td className="py-3 px-3 text-right">
-                        {isOverall ? (
+                        <span className="font-semibold text-sm text-green-700">
+                          {formatHeat((isOverall ? item.current_heat_value : item.heat_value) || 0)}
+                        </span>
+                      </td>
+
+                      {/* Heat Increment (overall only) */}
+                      {isOverall && (
+                        <td className="py-3 px-3 text-right">
                           <span className={`font-semibold text-sm ${
                             (item.heat_increment ?? 0) > 0 ? 'text-green-700' : (item.heat_increment ?? 0) < 0 ? 'text-red-500' : 'text-primary-text'
                           }`}>
                             {formatIncrement(item.heat_increment ?? 0)}
                           </span>
-                        ) : (
-                          <span className="font-semibold text-sm text-green-700">
-                            {formatHeat(item.heat_value || 0)}
-                          </span>
-                        )}
-                      </td>
+                        </td>
+                      )}
 
                       {/* Play Count */}
                       <td className="py-3 px-2 text-right">
@@ -502,7 +507,7 @@ export default function RankingTable({ type, title }: Props) {
               {isOverall ? '总榜' : selectedPlatform} · {latestDate ? `数据日期 ${latestDate}${timeMode === 'yesterday' ? '（昨日）' : timeMode === 'today' ? '（今日）' : ''}` : ''} · 共 {data.length} 条
             </span>
             <span className="text-xs text-primary-text-muted">
-              {isOverall ? '按热力增量排序，同剧取最佳平台' : `Top ${Math.min(20, data.length)}`}
+              {isOverall ? '按热力增量排序，累计热力值取跨平台最大值' : `Top ${Math.min(20, data.length)}`}
             </span>
           </div>
         )}

@@ -226,6 +226,8 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : '';
+    console.error('[dashboard/stats] ERROR:', message, '\n', stack);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { lockDbForScraper, unlockDbAfterScraper } from './db';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
 let started = false;
@@ -60,6 +61,7 @@ function runScraper() {
   const args = ['scraper/dataeye_scraper.py'];
 
   console.log(`[auto-scrape] 开始执行定时抓取...`);
+  lockDbForScraper();
   updateConfigField('last_auto_fetch_at', new Date().toISOString());
   updateConfigField('last_auto_fetch_status', 'running');
 
@@ -82,6 +84,7 @@ function runScraper() {
   });
 
   child.on('close', (code) => {
+    unlockDbAfterScraper();
     console.log(`[auto-scrape] 抓取完成，退出码: ${code}`);
     if (code === 0) {
       updateConfigField('last_auto_fetch_success_at', new Date().toISOString());
@@ -93,6 +96,7 @@ function runScraper() {
   });
 
   child.on('error', (err) => {
+    unlockDbAfterScraper();
     console.error(`[auto-scrape] 启动失败: ${err.message}`);
     updateConfigField('last_auto_fetch_status', 'failed');
   });

@@ -7,11 +7,15 @@ const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'dramatracker.db');
 
 let db: Database.Database | null = null;
+let _scraperLock = false;
 
 export function getDbPath() { return DB_PATH; }
 export function getDbDir() { return DB_DIR; }
 
 export function getDb(): Database.Database {
+  if (_scraperLock && !db) {
+    throw new Error('DB_SCRAPER_LOCKED');
+  }
   if (!db) {
     if (!fs.existsSync(DB_DIR)) {
       fs.mkdirSync(DB_DIR, { recursive: true });
@@ -25,6 +29,17 @@ export function getDb(): Database.Database {
   return db;
 }
 
+export function lockDbForScraper() {
+  resetDb();
+  _scraperLock = true;
+  console.log('[db] locked for scraper — connections blocked');
+}
+
+export function unlockDbAfterScraper() {
+  _scraperLock = false;
+  console.log('[db] unlocked — connections allowed');
+}
+
 /**
  * Close current DB connection so the file can be safely replaced.
  * Next call to getDb() will re-open and re-init.
@@ -34,6 +49,43 @@ export function resetDb() {
     try { db.close(); } catch { /* already closed */ }
     db = null;
   }
+}
+
+/**
+ * Force-close DB and prevent auto-reopen. Call via API or before process exit.
+ * After calling, getDb() will still work (re-opens on demand).
+ */
+export function forceCloseDb(): { closed: boolean; message: string } {
+  if (!db) {
+    return { closed: false, message: 'No active DB connection' };
+  }
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch { /* WAL may not exist */ }
+  try {
+    db.close();
+  } catch { /* already closed */ }
+  db = null;
+  return { closed: true, message: 'DB connection closed and WAL flushed' };
+}
+
+let _exitHandlerRegistered = false;
+
+export function registerExitHandler() {
+  if (_exitHandlerRegistered) return;
+  _exitHandlerRegistered = true;
+
+  const cleanup = (signal: string) => {
+    console.log(`[db] received ${signal}, closing database...`);
+    forceCloseDb();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', () => cleanup('SIGINT'));
+  process.on('SIGTERM', () => cleanup('SIGTERM'));
+  process.on('beforeExit', () => {
+    forceCloseDb();
+  });
 }
 
 function initDb(db: Database.Database) {

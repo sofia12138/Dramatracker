@@ -157,7 +157,7 @@ export default function DashboardPage() {
     grid: { left: 40, right: 20, top: 40, bottom: 40 },
     xAxis: {
       type: 'category' as const,
-      data: data?.platformAiCount.map(p => p.platform) || [],
+      data: (data?.platformAiCount || []).map(p => p.platform),
       axisLabel: { fontSize: 10, color: '#6b7280', rotate: 30 },
       axisLine: { lineStyle: { color: '#d0d5e0' } },
     },
@@ -169,12 +169,12 @@ export default function DashboardPage() {
     series: [
       {
         name: 'AI真人剧', type: 'bar', barGap: '20%',
-        data: data?.platformAiCount.map(p => p.ai_real) || [],
+        data: (data?.platformAiCount || []).map(p => p.ai_real),
         itemStyle: { color: '#3b82f6', borderRadius: [3, 3, 0, 0] },
       },
       {
         name: 'AI漫剧', type: 'bar',
-        data: data?.platformAiCount.map(p => p.ai_manga) || [],
+        data: (data?.platformAiCount || []).map(p => p.ai_manga),
         itemStyle: { color: '#8b5cf6', borderRadius: [3, 3, 0, 0] },
       },
     ],
@@ -437,7 +437,7 @@ export default function DashboardPage() {
             </div>
             <div className="card">
               <h2 className="text-base font-semibold text-primary-text mb-3">投放语种分布</h2>
-              {data.languageDistribution.length > 0 ? (
+              {(data.languageDistribution || []).length > 0 ? (
                 <ReactEChartsCore echarts={echarts} option={chart2Option} style={{ height: 300 }} notMerge />
               ) : (
                 <div className="h-[300px] flex items-center justify-center text-primary-text-muted text-sm">暂无语种数据</div>
@@ -449,14 +449,14 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <div className="card">
               <h2 className="text-base font-semibold text-primary-text mb-3">题材标签分布</h2>
-              {(data.tagDistribution.ai_real.length > 0 || data.tagDistribution.ai_comic.length > 0) ? (
+              {((data.tagDistribution?.ai_real || []).length > 0 || (data.tagDistribution?.ai_comic || []).length > 0) ? (
                 <div className="grid grid-cols-2 gap-4" style={{ minHeight: 300 }}>
                   <div>
                     <h3 className="text-xs font-semibold text-blue-600 mb-2 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-blue-500" />AI真人剧 Top5
                     </h3>
                     <div className="space-y-2">
-                      {data.tagDistribution.ai_real.map((t, i) => (
+                      {(data.tagDistribution?.ai_real || []).map((t, i) => (
                         <div key={i} className="flex items-center gap-2">
                           <span className="text-xs text-primary-text-muted w-4 shrink-0">{i + 1}</span>
                           <div className="flex-1 min-w-0">
@@ -466,12 +466,12 @@ export default function DashboardPage() {
                             </div>
                             <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                               <div className="h-full rounded-full bg-gradient-to-r from-blue-400 to-blue-600"
-                                style={{ width: `${Math.min(100, (t.count / (data.tagDistribution.ai_real[0]?.count || 1)) * 100)}%` }} />
+                                style={{ width: `${Math.min(100, (t.count / (data.tagDistribution?.ai_real?.[0]?.count || 1)) * 100)}%` }} />
                             </div>
                           </div>
                         </div>
                       ))}
-                      {data.tagDistribution.ai_real.length === 0 && (
+                      {(data.tagDistribution?.ai_real || []).length === 0 && (
                         <p className="text-xs text-primary-text-muted py-4 text-center">暂无数据</p>
                       )}
                     </div>
@@ -481,7 +481,7 @@ export default function DashboardPage() {
                       <span className="w-2 h-2 rounded-full bg-purple-500" />AI漫剧 Top5
                     </h3>
                     <div className="space-y-2">
-                      {data.tagDistribution.ai_comic.map((t, i) => (
+                      {(data.tagDistribution?.ai_comic || []).map((t, i) => (
                         <div key={i} className="flex items-center gap-2">
                           <span className="text-xs text-primary-text-muted w-4 shrink-0">{i + 1}</span>
                           <div className="flex-1 min-w-0">
@@ -491,12 +491,12 @@ export default function DashboardPage() {
                             </div>
                             <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                               <div className="h-full rounded-full bg-gradient-to-r from-purple-400 to-purple-600"
-                                style={{ width: `${Math.min(100, (t.count / (data.tagDistribution.ai_comic[0]?.count || 1)) * 100)}%` }} />
+                                style={{ width: `${Math.min(100, (t.count / (data.tagDistribution?.ai_comic?.[0]?.count || 1)) * 100)}%` }} />
                             </div>
                           </div>
                         </div>
                       ))}
-                      {data.tagDistribution.ai_comic.length === 0 && (
+                      {(data.tagDistribution?.ai_comic || []).length === 0 && (
                         <p className="text-xs text-primary-text-muted py-4 text-center">暂无数据</p>
                       )}
                     </div>
@@ -508,9 +508,9 @@ export default function DashboardPage() {
             </div>
             <div className="card">
               <h2 className="text-base font-semibold text-primary-text mb-3">周环比热力增长 Top5</h2>
-              {data.heatTop5 && data.heatTop5.length > 0 ? (
+              {(data.heatTop5 || []).length > 0 ? (
                 <div className="space-y-3" style={{ minHeight: 300 }}>
-                  {data.heatTop5.map((item, i) => (
+                  {(data.heatTop5 || []).map((item, i) => (
                     <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-primary-sidebar/40 border border-primary-border/50">
                       <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${
                         i === 0 ? 'bg-gradient-to-br from-yellow-300 to-yellow-500 text-yellow-900'

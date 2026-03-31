@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
-import { getDbPath } from '@/lib/db';
+import { getDbPath, getDb } from '@/lib/db';
 import fs from 'fs';
 
 /**
- * GET: download current database file as attachment
+ * GET: download current database file as attachment.
+ * Flushes WAL into the main file first so the download is always complete.
  */
 export async function GET(request: NextRequest) {
   const auth = checkPermission(request, 'manage_settings');
@@ -15,6 +16,11 @@ export async function GET(request: NextRequest) {
   if (!fs.existsSync(dbPath)) {
     return NextResponse.json({ error: '数据库文件不存在' }, { status: 404 });
   }
+
+  try {
+    const db = getDb();
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch { /* proceed even if checkpoint fails */ }
 
   const buffer = fs.readFileSync(dbPath);
   const stat = fs.statSync(dbPath);
