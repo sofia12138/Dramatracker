@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { apiFetch } from '@/lib/fetch';
 
+type ImportMode = 'merge' | 'replace';
+
 interface BackupEntry {
   name: string;
   size: number;
@@ -10,14 +12,33 @@ interface BackupEntry {
   createdAt: string;
 }
 
+interface ValidationSnapshot {
+  drama: number;
+  ranking_snapshot: number;
+  invest_trend: number | null;
+  hasInvestTrendTable: boolean;
+}
+
 interface ImportResult {
   success: boolean;
+  verified?: boolean;
+  rolledBack?: boolean;
+  mode: ImportMode;
   message: string;
-  stats: { drama_new: number; drama_updated: number; drama_skipped: number; ranking_inserted: number; trend_inserted: number };
-  newCounts: Record<string, number>;
+  stats?: { drama_new: number; drama_updated: number; drama_skipped: number; ranking_inserted: number; trend_inserted: number };
+  newCounts?: Record<string, number>;
+  backup?: string | null;
+  dbPath?: string;
+  backupPath?: string | null;
+  uploadedFileSize?: number;
+  uploadedWalSize?: number;
+  oldFileSize?: number;
+  newFileSize?: number;
+  validationBeforeReplace?: ValidationSnapshot;
 }
 
 export default function DataImportPage() {
+  const [mode, setMode] = useState<ImportMode>('merge');
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [backups, setBackups] = useState<BackupEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,7 +46,9 @@ export default function DataImportPage() {
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedWalFile, setSelectedWalFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const walInputRef = useRef<HTMLInputElement>(null);
 
   const fetchInfo = useCallback(() => {
     setLoading(true);
@@ -41,9 +64,28 @@ export default function DataImportPage() {
 
   useEffect(() => { fetchInfo(); }, [fetchInfo]);
 
+  const resetForm = () => {
+    setSelectedFile(null);
+    setSelectedWalFile(null);
+    setResult(null);
+    setError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (walInputRef.current) walInputRef.current.value = '';
+  };
+
+  const handleModeChange = (newMode: ImportMode) => {
+    setMode(newMode);
+    resetForm();
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] || null;
-    setSelectedFile(file);
+    setSelectedFile(e.target.files?.[0] || null);
+    setResult(null);
+    setError('');
+  };
+
+  const handleWalFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSelectedWalFile(e.target.files?.[0] || null);
     setResult(null);
     setError('');
   };
@@ -51,7 +93,7 @@ export default function DataImportPage() {
   const handleUpload = async () => {
     if (!selectedFile) return;
 
-    if (!selectedFile.name.endsWith('.db')) {
+    if (mode === 'merge' && !selectedFile.name.endsWith('.db')) {
       setError('仅支持 .db 格式文件');
       return;
     }
@@ -61,11 +103,16 @@ export default function DataImportPage() {
       return;
     }
 
-    const confirmed = window.confirm(
-      `确定要从 "${selectedFile.name}" (${formatBytes(selectedFile.size)}) 导入抓取数据吗？\n\n` +
-      '✅ 只会合并抓取数据，不会覆盖线上已有的审核结果。'
-    );
-    if (!confirmed) return;
+    const confirmMsg = mode === 'merge'
+      ? `确定要从 "${selectedFile.name}" (${formatBytes(selectedFile.size)}) 导入抓取数据吗？\n\n` +
+        '只会合并抓取数据，不会覆盖线上已有的审核结果。'
+      : `确定要用 "${selectedFile.name}" (${formatBytes(selectedFile.size)}) 替换线上整个数据库吗？\n\n` +
+        '⚠️ 整库替换将覆盖线上所有数据（包括已审核的数据）！\n' +
+        '替换前会自动备份当前数据库。\n\n' +
+        (selectedWalFile ? `WAL 文件：${selectedWalFile.name} (${formatBytes(selectedWalFile.size)})\n\n` : '') +
+        '请确认你了解风险后再继续。';
+
+    if (!window.confirm(confirmMsg)) return;
 
     setUploading(true);
     setResult(null);
@@ -73,7 +120,11 @@ export default function DataImportPage() {
 
     try {
       const formData = new FormData();
+      formData.append('mode', mode);
       formData.append('file', selectedFile);
+      if (mode === 'replace' && selectedWalFile) {
+        formData.append('walFile', selectedWalFile);
+      }
 
       const res = await apiFetch('/api/data/import', {
         method: 'POST',
@@ -87,7 +138,9 @@ export default function DataImportPage() {
       } else {
         setResult(data);
         setSelectedFile(null);
+        setSelectedWalFile(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
+        if (walInputRef.current) walInputRef.current.value = '';
         fetchInfo();
       }
     } catch (e) {
@@ -106,9 +159,12 @@ export default function DataImportPage() {
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold text-primary-text">抓取数据导入</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-primary-text">数据库导入</h1>
+            <EnvBadge />
+          </div>
           <p className="mt-1 text-sm text-primary-text-muted">
-            上传本地抓取的 SQLite 数据库，增量合并到线上。已有的审核结果不会被覆盖。
+            上传本地 SQLite 数据库到线上，支持增量合并和整库替换两种模式。
           </p>
         </div>
 
@@ -145,31 +201,77 @@ export default function DataImportPage() {
           </div>
         </div>
 
-        {/* Upload Section */}
+        {/* Mode Selector */}
         <div className="bg-primary-card border border-primary-border rounded-xl p-6">
           <h2 className="text-lg font-semibold text-primary-text mb-4 flex items-center gap-2">
             <svg className="w-5 h-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
-            上传新数据库
+            上传数据库
           </h2>
 
-          <div className="space-y-4">
-            {/* Instructions */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
-              <p className="font-medium mb-2">安全导入说明：</p>
-              <ul className="list-disc list-inside space-y-1 text-blue-700">
-                <li>仅支持 <code className="bg-blue-100 px-1 rounded">.db</code> 格式的 SQLite 文件（最大 100 MB）</li>
-                <li>上传的数据库必须包含 <code className="bg-blue-100 px-1 rounded">drama</code> 和 <code className="bg-blue-100 px-1 rounded">ranking_snapshot</code> 表</li>
-                <li><strong>增量合并</strong>：新剧集会插入，已有剧集只更新标题、封面等抓取字段</li>
-                <li><strong>审核保护</strong>：线上已有的 <code className="bg-blue-100 px-1 rounded">is_ai_drama</code>、题材标签等审核结果不会被覆盖</li>
-                <li>榜单快照和投放趋势按唯一键去重，不会产生重复数据</li>
-              </ul>
-            </div>
+          {/* Mode Tabs */}
+          <div className="flex gap-2 mb-5">
+            <button
+              onClick={() => handleModeChange('merge')}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                mode === 'merge'
+                  ? 'bg-primary-accent text-white'
+                  : 'bg-primary-sidebar text-primary-text-secondary hover:bg-primary-card border border-primary-border'
+              }`}
+            >
+              增量合并
+            </button>
+            <button
+              onClick={() => handleModeChange('replace')}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                mode === 'replace'
+                  ? 'bg-red-500 text-white'
+                  : 'bg-primary-sidebar text-primary-text-secondary hover:bg-primary-card border border-primary-border'
+              }`}
+            >
+              整库替换
+            </button>
+          </div>
 
-            {/* File Input */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-              <label className="flex-1 w-full">
+          <div className="space-y-4">
+            {/* Instructions — Merge */}
+            {mode === 'merge' && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+                <p className="font-medium mb-2">增量合并说明：</p>
+                <ul className="list-disc list-inside space-y-1 text-blue-700">
+                  <li>上传 <code className="bg-blue-100 px-1 rounded">.db</code> 格式的 SQLite 文件（最大 100 MB）</li>
+                  <li>新剧集会插入，已有剧集只更新标题、封面等抓取字段</li>
+                  <li>线上已有的 <code className="bg-blue-100 px-1 rounded">is_ai_drama</code>、题材标签等审核结果不会被覆盖</li>
+                  <li>榜单快照和投放趋势按唯一键去重，不会产生重复数据</li>
+                </ul>
+              </div>
+            )}
+
+            {/* Instructions — Replace */}
+            {mode === 'replace' && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-800">
+                <p className="font-medium mb-2">整库替换说明：</p>
+                <ul className="list-disc list-inside space-y-1 text-red-700">
+                  <li><strong>主库文件</strong>（<code className="bg-red-100 px-1 rounded">dramatracker.db</code>）：必须上传</li>
+                  <li><strong>WAL 文件</strong>（<code className="bg-red-100 px-1 rounded">dramatracker.db-wal</code>）：建议一起上传，确保数据完整</li>
+                  <li><strong>SHM 文件</strong>（<code className="bg-red-100 px-1 rounded">.db-shm</code>）：不需要上传，系统会自动处理</li>
+                  <li>替换前会自动备份当前数据库到 <code className="bg-red-100 px-1 rounded">data/backup/</code></li>
+                  <li>如果替换失败，系统会自动回滚到备份</li>
+                </ul>
+                <p className="mt-3 font-semibold text-red-900">
+                  ⚠️ 整库替换会覆盖线上所有数据，包括已审核的记录！请确认你了解风险。
+                </p>
+              </div>
+            )}
+
+            {/* File Inputs */}
+            <div className="space-y-3">
+              {/* Main DB File */}
+              <div>
+                <label className="block text-sm font-medium text-primary-text mb-1.5">
+                  {mode === 'merge' ? '选择数据库文件' : '主库文件（必传）'}
+                </label>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -177,36 +279,61 @@ export default function DataImportPage() {
                   onChange={handleFileSelect}
                   className="block w-full text-sm text-primary-text-secondary file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-accent file:text-white hover:file:bg-primary-accent/90 file:cursor-pointer file:transition-colors"
                 />
-              </label>
-              <button
-                onClick={handleUpload}
-                disabled={!selectedFile || uploading}
-                className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium rounded-lg bg-primary-accent text-white hover:bg-primary-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-              >
-                {uploading ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                    </svg>
-                    导入中...
-                  </>
-                ) : (
-                  '开始导入'
-                )}
-              </button>
+              </div>
+
+              {/* WAL File (replace mode only) */}
+              {mode === 'replace' && (
+                <div>
+                  <label className="block text-sm font-medium text-primary-text mb-1.5">
+                    WAL 文件（建议上传）
+                  </label>
+                  <input
+                    ref={walInputRef}
+                    type="file"
+                    onChange={handleWalFileSelect}
+                    className="block w-full text-sm text-primary-text-secondary file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-orange-500 file:text-white hover:file:bg-orange-600 file:cursor-pointer file:transition-colors"
+                  />
+                  <p className="mt-1 text-xs text-primary-text-muted">
+                    通常位于 data/ 目录下，文件名为 dramatracker.db-wal
+                  </p>
+                </div>
+              )}
+
+              {/* Upload Button */}
+              <div className="pt-1">
+                <button
+                  onClick={handleUpload}
+                  disabled={!selectedFile || uploading}
+                  className={`inline-flex items-center gap-2 px-5 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap ${
+                    mode === 'replace'
+                      ? 'bg-red-500 hover:bg-red-600'
+                      : 'bg-primary-accent hover:bg-primary-accent/90'
+                  }`}
+                >
+                  {uploading ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                      </svg>
+                      {mode === 'replace' ? '替换中...' : '导入中...'}
+                    </>
+                  ) : (
+                    mode === 'replace' ? '开始替换' : '开始导入'
+                  )}
+                </button>
+              </div>
             </div>
 
-            {/* Selected File Preview */}
-            {selectedFile && (
-              <div className="flex items-center gap-3 p-3 bg-primary-sidebar rounded-lg border border-primary-border">
-                <svg className="w-5 h-5 text-primary-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-primary-text truncate">{selectedFile.name}</p>
-                  <p className="text-xs text-primary-text-muted">{formatBytes(selectedFile.size)}</p>
-                </div>
+            {/* Selected Files Preview */}
+            {(selectedFile || selectedWalFile) && (
+              <div className="space-y-2">
+                {selectedFile && (
+                  <FilePreview label="主库" name={selectedFile.name} size={selectedFile.size} variant="main" />
+                )}
+                {selectedWalFile && (
+                  <FilePreview label="WAL" name={selectedWalFile.name} size={selectedWalFile.size} variant="wal" />
+                )}
               </div>
             )}
 
@@ -231,28 +358,73 @@ export default function DataImportPage() {
                   </svg>
                   {result.message}
                 </p>
-                <div className="grid grid-cols-2 gap-4 mt-2">
-                  <div>
-                    <p className="text-xs font-medium text-green-800 mb-1">合并结果</p>
-                    <p className="text-xs text-green-700">新增剧集：{result.stats.drama_new} 部</p>
-                    <p className="text-xs text-green-700">更新元数据：{result.stats.drama_updated} 部</p>
-                    <p className="text-xs text-green-700">新增榜单记录：{result.stats.ranking_inserted} 条</p>
-                    {result.stats.trend_inserted > 0 && (
-                      <p className="text-xs text-green-700">新增投放趋势：{result.stats.trend_inserted} 条</p>
-                    )}
+
+                {/* Merge-specific stats */}
+                {result.mode === 'merge' && result.stats && result.newCounts && (
+                  <div className="grid grid-cols-2 gap-4 mt-2">
+                    <div>
+                      <p className="text-xs font-medium text-green-800 mb-1">合并结果</p>
+                      <p className="text-xs text-green-700">新增剧集：{result.stats.drama_new} 部</p>
+                      <p className="text-xs text-green-700">更新元数据：{result.stats.drama_updated} 部</p>
+                      <p className="text-xs text-green-700">新增榜单记录：{result.stats.ranking_inserted} 条</p>
+                      {result.stats.trend_inserted > 0 && (
+                        <p className="text-xs text-green-700">新增投放趋势：{result.stats.trend_inserted} 条</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-green-800 mb-1">当前数据库</p>
+                      {Object.entries(result.newCounts).map(([table, count]) => (
+                        <p key={table} className="text-xs text-green-700">{table}: {count} 条</p>
+                      ))}
+                      {result.dbPath && (
+                        <p className="text-xs text-green-600 mt-1 break-all font-mono">{result.dbPath}</p>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-xs font-medium text-green-800 mb-1">当前数据库</p>
+                )}
+
+                {/* Replace-specific stats */}
+                {result.mode === 'replace' && result.newCounts && (
+                  <div className="mt-2 space-y-2">
+                    {result.verified && (
+                      <p className="text-xs font-semibold text-green-800">
+                        服务端已校验：上传库行数与替换后一致（非仅“表存在”的假成功）。
+                      </p>
+                    )}
+                    <p className="text-xs font-medium text-green-800 mb-1">替换后数据库</p>
                     {Object.entries(result.newCounts).map(([table, count]) => (
                       <p key={table} className="text-xs text-green-700">{table}: {count} 条</p>
                     ))}
+                    {result.validationBeforeReplace && (
+                      <p className="text-xs text-green-600">
+                        上传库校验：drama {result.validationBeforeReplace.drama}，ranking_snapshot {result.validationBeforeReplace.ranking_snapshot}
+                        {result.validationBeforeReplace.hasInvestTrendTable ? `，invest_trend ${result.validationBeforeReplace.invest_trend}` : ''}
+                      </p>
+                    )}
+                    {result.dbPath && (
+                      <p className="text-xs text-green-700 break-all font-mono">路径：{result.dbPath}</p>
+                    )}
+                    {(result.oldFileSize !== undefined || result.newFileSize !== undefined) && (
+                      <p className="text-xs text-green-600">
+                        原主库大小 {formatBytes(result.oldFileSize ?? 0)} → 新主库大小 {formatBytes(result.newFileSize ?? 0)}
+                        {result.uploadedFileSize !== undefined ? `（上传 ${formatBytes(result.uploadedFileSize)}）` : ''}
+                      </p>
+                    )}
+                    {(result.backupPath || result.backup) && (
+                      <p className="text-xs text-green-600 mt-1 break-all">
+                        备份：{result.backupPath ?? result.backup}
+                      </p>
+                    )}
                   </div>
-                </div>
-                <div className="pt-2 border-t border-green-200">
-                  <p className="text-xs text-green-600">
-                    线上审核数据（is_ai_drama、题材标签）均已保留，未被覆盖。
-                  </p>
-                </div>
+                )}
+
+                {result.mode === 'merge' && (
+                  <div className="pt-2 border-t border-green-200">
+                    <p className="text-xs text-green-600">
+                      线上审核数据（is_ai_drama、题材标签）均已保留，未被覆盖。
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -293,24 +465,57 @@ export default function DataImportPage() {
           )}
         </div>
 
-        {/* Warning */}
+        {/* Bottom Info */}
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
           <p className="text-sm text-emerald-800 flex items-start gap-2">
             <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
             <span>
-              <strong>审核保护机制：</strong>以下字段在导入时永远不会被覆盖：
-              <code className="bg-emerald-100 px-1 rounded">is_ai_drama</code>、
-              <code className="bg-emerald-100 px-1 rounded">genre_tags_manual</code>、
-              <code className="bg-emerald-100 px-1 rounded">genre_tags_ai</code>、
-              <code className="bg-emerald-100 px-1 rounded">genre_source</code>。
-              可以放心上传本地抓取数据。
+              <strong>两种模式区别：</strong>
+              「增量合并」保护线上审核数据（is_ai_drama、题材标签等），只合并抓取字段；
+              「整库替换」会用上传的数据库完全覆盖线上数据库，替换前自动备份。
             </span>
           </p>
         </div>
       </div>
     </div>
+  );
+}
+
+function FilePreview({ label, name, size, variant }: { label: string; name: string; size: number; variant: 'main' | 'wal' }) {
+  const badgeCls = variant === 'wal'
+    ? 'bg-orange-100 text-orange-600'
+    : 'bg-blue-100 text-blue-600';
+  return (
+    <div className="flex items-center gap-3 p-3 bg-primary-sidebar rounded-lg border border-primary-border">
+      <span className={`text-xs font-medium px-2 py-0.5 rounded ${badgeCls}`}>{label}</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-primary-text truncate">{name}</p>
+        <p className="text-xs text-primary-text-muted">{formatBytes(size)}</p>
+      </div>
+    </div>
+  );
+}
+
+function EnvBadge() {
+  const [env, setEnv] = useState('');
+  useEffect(() => {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') {
+      setEnv('本地开发');
+    } else {
+      setEnv('线上环境');
+    }
+  }, []);
+  if (!env) return null;
+  const isLocal = env === '本地开发';
+  return (
+    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+      isLocal ? 'bg-gray-100 text-gray-600' : 'bg-red-100 text-red-700'
+    }`}>
+      {env}
+    </span>
   );
 }
 
