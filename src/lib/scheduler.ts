@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { lockDbForScraper, unlockDbAfterScraper } from './db';
+import { exportDailyDb } from './export-daily';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
 let started = false;
@@ -89,6 +90,10 @@ function runScraper() {
     if (code === 0) {
       updateConfigField('last_auto_fetch_success_at', new Date().toISOString());
       updateConfigField('last_auto_fetch_status', 'success');
+      const result = exportDailyDb();
+      if (result) {
+        console.log(`[auto-scrape] 每日导出完成: ${result.stats.snapshots} snapshots, ${result.stats.dramas} dramas -> ${result.path}`);
+      }
       triggerReviewAlert();
     } else {
       updateConfigField('last_auto_fetch_status', 'failed');

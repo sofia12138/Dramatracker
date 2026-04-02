@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 import { lockDbForScraper, unlockDbAfterScraper } from '@/lib/db';
+import { exportDailyDb } from '@/lib/export-daily';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
 
@@ -116,6 +117,10 @@ export async function POST(request: NextRequest) {
         if (code === 0) {
           updateConfigField('last_auto_fetch_success_at', new Date().toISOString());
           updateConfigField('last_auto_fetch_status', 'success');
+          const exportResult = exportDailyDb();
+          if (exportResult) {
+            send(`[系统] 每日数据已导出: ${exportResult.stats.snapshots} snapshots, ${exportResult.stats.dramas} dramas -> ${exportResult.path}\n`);
+          }
           await triggerReviewAlert(send);
         } else {
           updateConfigField('last_auto_fetch_status', 'failed');

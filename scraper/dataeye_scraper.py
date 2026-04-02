@@ -116,7 +116,8 @@ def _safe_print(text: str):
     try:
         print(text, flush=True)
     except UnicodeEncodeError:
-        print(text.encode("utf-8", errors="replace").decode("utf-8", errors="replace"), flush=True)
+        safe = text.encode(sys.stdout.encoding or "ascii", errors="replace").decode(sys.stdout.encoding or "ascii", errors="replace")
+        print(safe, flush=True)
 
 
 def log(msg: str):
@@ -207,6 +208,21 @@ def check_response(data: dict, cookie: str) -> bool:
     return True
 
 
+def _request_with_retry(url: str, payload: dict, headers: dict, max_retries: int = 3) -> requests.Response:
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post(url, data=payload, headers=headers, timeout=30)
+            return resp
+        except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError) as e:
+            log(f"  ⚠️ 网络请求失败 (第{attempt}/{max_retries}次): {e}")
+            if attempt < max_retries:
+                wait = attempt * 5
+                log(f"  ⏳ {wait}秒后重试...")
+                time.sleep(wait)
+            else:
+                raise
+
+
 def fetch_ranking(cookie: str, product_id: int, headers: dict) -> list[dict]:
     this_times = str(int(time.time() * 1000))
     payload = {
@@ -219,7 +235,7 @@ def fetch_ranking(cookie: str, product_id: int, headers: dict) -> list[dict]:
     payload["sign"] = compute_sign(payload)
     debug(f"[API] 发送榜单请求 -> {URL_LIST}")
     debug(f"  参数: productId={product_id}, pageSize=20, dimDate=7")
-    resp = requests.post(URL_LIST, data=payload, headers=headers, timeout=30)
+    resp = _request_with_retry(URL_LIST, payload, headers)
     debug(f"  收到响应: HTTP {resp.status_code}, 长度={len(resp.text)}")
     data = resp.json()
     if not check_response(data, cookie):
@@ -246,7 +262,7 @@ def fetch_detail(cookie: str, playlet_id: str, headers: dict) -> dict | None:
     payload["sign"] = compute_sign(payload)
     debug(f"[API] 发送详情请求 -> {URL_DETAIL}")
     debug(f"  参数: playletId={playlet_id}")
-    resp = requests.post(URL_DETAIL, data=payload, headers=headers, timeout=30)
+    resp = _request_with_retry(URL_DETAIL, payload, headers)
     debug(f"  收到响应: HTTP {resp.status_code}, 长度={len(resp.text)}")
     data = resp.json()
     if not check_response(data, cookie):
@@ -274,7 +290,7 @@ def fetch_trend(cookie: str, playlet_id: str, start_date: str, end_date: str, he
     payload["sign"] = compute_sign(payload)
     debug(f"[API] 发送趋势请求 -> {URL_TREND}")
     debug(f"  参数: playletId={playlet_id}, {start_date} ~ {end_date}")
-    resp = requests.post(URL_TREND, data=payload, headers=headers, timeout=30)
+    resp = _request_with_retry(URL_TREND, payload, headers)
     debug(f"  收到响应: HTTP {resp.status_code}, 长度={len(resp.text)}")
     data = resp.json()
     if not check_response(data, cookie):

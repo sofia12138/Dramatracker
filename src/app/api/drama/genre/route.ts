@@ -32,7 +32,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: NextRequest) {
-  const auth = checkPermission(request, 'review_drama');
+  const auth = checkPermission(request, 'edit_drama');
   if (isErrorResponse(auth)) return auth;
 
   try {

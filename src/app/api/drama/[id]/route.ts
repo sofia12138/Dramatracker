@@ -25,7 +25,7 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
-  const auth = checkPermission(request, 'review_drama');
+  const auth = checkPermission(request, 'edit_drama');
   if (isErrorResponse(auth)) return auth;
 
   try {
