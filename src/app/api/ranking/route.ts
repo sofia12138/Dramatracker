@@ -55,6 +55,8 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('start_date') || '';
     const endDate = searchParams.get('end_date') || '';
     const limit = parseInt(searchParams.get('limit') || '50');
+    // 'total'：总榜（按 heat_value 排序）；'trending'：趋势榜（按 heat_increment 排序）
+    const rankingMode = searchParams.get('ranking_mode') || 'total';
 
     const latestDateRow = db.prepare(
       'SELECT MAX(snapshot_date) as d FROM ranking_snapshot'
@@ -178,10 +180,10 @@ export async function GET(request: NextRequest) {
         sparkline: sparklines.get(item.playlet_id) || [],
       }));
 
-      return NextResponse.json({ data: result, latestDate, total: result.length, dataAccumulating, snapshotDays });
+      return NextResponse.json({ data: result, latestDate, total: result.length, dataAccumulating, snapshotDays, rankingMode: 'platform' });
     }
 
-    // "总榜" mode: deduplicate, aggregate across platforms
+    // 总榜 / 趋势榜：跨平台去重聚合
     const sql = `
       SELECT 
         rs.playlet_id,
@@ -217,7 +219,10 @@ export async function GET(request: NextRequest) {
     const baselineDate = getBaselineDate(db, effectiveMode, latestDate, startDate, endDate);
     const baselineHeatMap = baselineDate ? getHeatValuesOnDate(db, baselineDate, isAiDrama) : null;
 
-    // Deduplicate: keep the platform record with max heat increment for each drama
+    // Deduplicate across platforms:
+    // - total mode:   keep the record with max heat_value as representative
+    // - trending mode: keep the record with max heat_increment as representative
+    // Both modes always track maxHeatValue and maxHeatIncrement for sorting/display.
     const dramaMap = new Map<string, {
       item: RankingRow;
       platforms: { name: string; rank: number }[];
@@ -249,27 +254,43 @@ export async function GET(request: NextRequest) {
         if (!existing.platforms.some(p => p.name === row.platform)) {
           existing.platforms.push({ name: row.platform, rank: row.rank });
         }
+
+        // 总榜：选 heat_value 最大的平台记录作为代表
         if (row.heat_value > existing.maxHeatValue) {
           existing.maxHeatValue = row.heat_value;
+          if (rankingMode === 'total') {
+            existing.item = row;
+            existing.bestPlatform = row.platform;
+          }
         }
+
+        // 始终记录最大 heat_increment（总榜用于展示参考，趋势榜用于排序和选代表）
         const existingInc = existing.heatIncrement ?? -Infinity;
         const newInc = increment ?? -Infinity;
         if (newInc > existingInc) {
           existing.heatIncrement = increment;
-          existing.item = row;
-          existing.bestPlatform = row.platform;
+          if (rankingMode === 'trending') {
+            existing.item = row;
+            existing.bestPlatform = row.platform;
+          }
         }
       }
     }
 
-    // Sort: valid increments first (desc), then nulls (by heat value desc)
+    // 总榜：按 heat_value DESC，rank ASC 兜底
+    // 趋势榜：按 heat_increment DESC，heat_value DESC 兜底
     const sorted = Array.from(dramaMap.values())
       .sort((a, b) => {
-        const ai = a.heatIncrement, bi = b.heatIncrement;
-        if (ai !== null && bi !== null) return bi - ai;
-        if (ai !== null) return -1;
-        if (bi !== null) return 1;
-        return b.maxHeatValue - a.maxHeatValue;
+        if (rankingMode === 'total') {
+          if (b.maxHeatValue !== a.maxHeatValue) return b.maxHeatValue - a.maxHeatValue;
+          return a.item.rank - b.item.rank;
+        } else {
+          const ai = a.heatIncrement, bi = b.heatIncrement;
+          if (ai !== null && bi !== null) return bi - ai;
+          if (ai !== null) return -1;
+          if (bi !== null) return 1;
+          return b.maxHeatValue - a.maxHeatValue;
+        }
       })
       .slice(0, limit);
 
@@ -300,7 +321,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ data: result, latestDate, total: result.length, dataAccumulating, snapshotDays });
+    return NextResponse.json({ data: result, latestDate, total: result.length, dataAccumulating, snapshotDays, rankingMode });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });

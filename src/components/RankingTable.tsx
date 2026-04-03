@@ -38,8 +38,10 @@ interface Props {
   title: string;
 }
 
-const FALLBACK_PLATFORMS = ['all', 'ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
-const PLATFORM_LABELS: Record<string, string> = { all: '总榜' };
+const FALLBACK_PLATFORMS = ['all', 'trending', 'ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
+const PLATFORM_LABELS: Record<string, string> = { all: '总榜', trending: '趋势榜' };
+// 这两个是跨平台汇总榜，不是平台名
+const CROSS_PLATFORM_TABS = new Set(['all', 'trending']);
 const LANGUAGES = ['全部', 'English', 'Spanish', 'Portuguese', 'French', 'Indonesian', 'German'];
 const TIME_MODES = [
   { key: 'today', label: '今天' },
@@ -177,12 +179,13 @@ export default function RankingTable({ type, title }: Props) {
       .then(r => r.json())
       .then((list: { name: string; is_active: number }[]) => {
         const active = list.filter(p => p.is_active).map(p => p.name);
-        if (active.length > 0) setPlatforms(['all', ...active]);
+        if (active.length > 0) setPlatforms(['all', 'trending', ...active]);
       })
       .catch(() => {});
   }, []);
 
-  const isOverall = selectedPlatform === 'all';
+  const isTrending = selectedPlatform === 'trending';
+  const isOverall = CROSS_PLATFORM_TABS.has(selectedPlatform);
 
   const fetchData = useCallback(async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
@@ -194,7 +197,12 @@ export default function RankingTable({ type, title }: Props) {
       limit: isOverall ? '50' : '20',
     });
 
-    if (!isOverall) params.set('platform', selectedPlatform);
+    if (isOverall) {
+      // 跨平台汇总榜：传 ranking_mode 区分总榜/趋势榜
+      params.set('ranking_mode', isTrending ? 'trending' : 'total');
+    } else {
+      params.set('platform', selectedPlatform);
+    }
     if (timeMode === 'custom' && customStart && customEnd) {
       params.set('start_date', customStart);
       params.set('end_date', customEnd);
@@ -220,7 +228,7 @@ export default function RankingTable({ type, title }: Props) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [type, selectedPlatform, timeMode, customStart, customEnd, langFilter, isOverall]);
+  }, [type, selectedPlatform, timeMode, customStart, customEnd, langFilter, isOverall, isTrending]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -308,21 +316,26 @@ export default function RankingTable({ type, title }: Props) {
 
       {/* Platform Tabs */}
       <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-hide">
-        {platforms.map(p => {
+        {platforms.map((p, idx) => {
           const label = PLATFORM_LABELS[p] || p;
           const active = selectedPlatform === p;
+          const isCrossTab = CROSS_PLATFORM_TABS.has(p);
+          // 在跨平台 tab 和平台 tab 之间加分隔
+          const showDivider = idx > 0 && isCrossTab === false && CROSS_PLATFORM_TABS.has(platforms[idx - 1]);
           return (
-            <button
-              key={p}
-              onClick={() => setSelectedPlatform(p)}
-              className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-all border ${
-                active
-                  ? 'bg-primary-accent-bg text-primary-accent border-primary-accent-border shadow-sm'
-                  : 'bg-primary-card text-primary-text-secondary border-transparent hover:bg-primary-sidebar hover:text-primary-text'
-              }`}
-            >
-              {label}
-            </button>
+            <div key={p} className="flex items-center gap-1">
+              {showDivider && <div className="w-px h-6 bg-primary-border/50 mx-1 self-center shrink-0" />}
+              <button
+                onClick={() => setSelectedPlatform(p)}
+                className={`px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-all border ${
+                  active
+                    ? 'bg-primary-accent-bg text-primary-accent border-primary-accent-border shadow-sm'
+                    : 'bg-primary-card text-primary-text-secondary border-transparent hover:bg-primary-sidebar hover:text-primary-text'
+                }`}
+              >
+                {label}
+              </button>
+            </div>
           );
         })}
       </div>
@@ -334,6 +347,18 @@ export default function RankingTable({ type, title }: Props) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <span>历史数据积累中（已有 {snapshotDays} 天快照），每日抓取后将自动丰富，当前展示已有数据</span>
+        </div>
+      )}
+
+      {/* 榜单排序说明 */}
+      {isOverall && (
+        <div className="flex items-center gap-1.5 px-4 py-2 bg-primary-sidebar/40 rounded-lg border border-primary-border/50 text-xs text-primary-text-muted">
+          <svg className="w-3.5 h-3.5 shrink-0 text-primary-accent/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {isTrending
+            ? '趋势榜：按热力增量排序，跨平台去重（同一部剧保留增量最大的平台记录）'
+            : '总榜：按当前热力值排序，跨平台去重（同一部剧保留热力值最大的平台记录）'}
         </div>
       )}
 
@@ -367,10 +392,14 @@ export default function RankingTable({ type, title }: Props) {
                   <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">累计热力值</th>
                   <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">
                     {accumulating
-                      ? '日增量（积累中）'
-                      : timeMode === '7days' ? '7天增量' : timeMode === '30days' ? '30天增量' : '日增量'}
+                      ? '增量（积累中）'
+                      : timeMode === '7days'
+                        ? (isTrending ? '7天增量↑排序' : '7天增量')
+                        : timeMode === '30days'
+                          ? (isTrending ? '30天增量↑排序' : '30天增量')
+                          : (isTrending ? '日增量↑排序' : '日增量')}
                   </th>
-                  <th className="text-right py-3 px-2 font-medium text-primary-text-secondary w-20">播放量</th>
+                  <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20">原榜排名</th>
                   <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20">投放趋势</th>
                   <th className="text-center py-3 px-3 font-medium text-primary-text-secondary w-16">操作</th>
                 </tr>
@@ -392,11 +421,6 @@ export default function RankingTable({ type, title }: Props) {
                           ) : (
                             <span className={`text-lg font-bold ${item.rank <= 3 ? 'text-primary-accent' : 'text-primary-text'}`}>
                               {item.rank}
-                            </span>
-                          )}
-                          {item.orig_rank !== undefined && item.orig_rank !== item.rank && (
-                            <span className="text-[10px] text-primary-text-muted mt-0.5">
-                              {isOverall ? `#${item.orig_rank}` : `原榜 #${item.orig_rank}`}
                             </span>
                           )}
                         </div>
@@ -523,9 +547,13 @@ export default function RankingTable({ type, title }: Props) {
                         )}
                       </td>
 
-                      {/* Play Count */}
-                      <td className="py-3 px-2 text-right">
-                        <span className="text-xs text-primary-text-muted">-</span>
+                      {/* Original Platform Rank */}
+                      <td className="py-3 px-2 text-center">
+                        {item.orig_rank != null ? (
+                          <span className="text-xs text-primary-text-secondary font-medium">#{item.orig_rank}</span>
+                        ) : (
+                          <span className="text-xs text-primary-text-muted">-</span>
+                        )}
                       </td>
 
                       {/* Sparkline */}
@@ -556,11 +584,13 @@ export default function RankingTable({ type, title }: Props) {
         {!loading && data.length > 0 && (
           <div className="px-4 py-3 border-t border-primary-border/50 bg-primary-sidebar/30 flex items-center justify-between">
             <span className="text-xs text-primary-text-muted">
-              {isOverall ? '总榜' : selectedPlatform} · {latestDate ? `数据日期 ${latestDate}${timeMode === 'yesterday' ? '（昨日）' : timeMode === 'today' ? '（今日）' : ''}` : ''} · 共 {data.length} 条
+              {isOverall ? (isTrending ? '趋势榜' : '总榜') : selectedPlatform} · {latestDate ? `数据日期 ${latestDate}${timeMode === 'yesterday' ? '（昨日）' : timeMode === 'today' ? '（今日）' : ''}` : ''} · 共 {data.length} 条
             </span>
             <span className="text-xs text-primary-text-muted">
               {isOverall
-                ? `按${accumulating ? '日' : timeMode === '7days' ? '7天' : timeMode === '30days' ? '30天' : '日'}增量排序，累计热力值取跨平台最大值`
+                ? isTrending
+                  ? `趋势榜 · 按热力增量排序 · 跨平台去重`
+                  : `总榜 · 按当前热力值排序 · 跨平台去重`
                 : `Top ${Math.min(20, data.length)}`}
             </span>
           </div>
