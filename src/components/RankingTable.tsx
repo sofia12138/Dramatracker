@@ -31,6 +31,9 @@ interface RankingItem {
   sparkline: number[];
   platforms_list?: { name: string; rank: number }[];
   best_platform?: string;
+  first_seen_date?: string;
+  effective_new_date?: string;
+  classification_status?: 'classified' | 'pending_review';
 }
 
 interface Props {
@@ -38,10 +41,27 @@ interface Props {
   title: string;
 }
 
-const FALLBACK_PLATFORMS = ['all', 'trending', 'ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
-const PLATFORM_LABELS: Record<string, string> = { all: '总榜', trending: '趋势榜' };
-// 这两个是跨平台汇总榜，不是平台名
-const CROSS_PLATFORM_TABS = new Set(['all', 'trending']);
+const FALLBACK_PLATFORMS = ['all', 'trending', 'new', 'ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
+const PLATFORM_LABELS: Record<string, string> = { all: '总榜', trending: '趋势榜', new: '新剧榜' };
+// 这三个是跨平台汇总榜，不是平台名
+const CROSS_PLATFORM_TABS = new Set(['all', 'trending', 'new']);
+
+const NEW_WINDOW_OPTIONS = [
+  { key: 'today', label: '今天' },
+  { key: 'yesterday', label: '昨天' },
+  { key: '7d', label: '近7天' },
+  { key: '30d', label: '近30天' },
+];
+const NEW_SORT_OPTIONS = [
+  { key: 'heat', label: '当前热力' },
+  { key: 'increment', label: '热力增量' },
+  { key: 'new', label: '上新时间' },
+];
+const NEW_CLASSIFY_OPTIONS = [
+  { key: 'all', label: '全部' },
+  { key: 'classified', label: '仅已分类' },
+  { key: 'pending', label: '仅待审核' },
+];
 const LANGUAGES = ['全部', 'English', 'Spanish', 'Portuguese', 'French', 'Indonesian', 'German'];
 const TIME_MODES = [
   { key: 'today', label: '今天' },
@@ -173,18 +193,24 @@ export default function RankingTable({ type, title }: Props) {
   const [snapshotDays, setSnapshotDays] = useState(0);
   const [showCompetitor, setShowCompetitor] = useState(false);
   const [platforms, setPlatforms] = useState<string[]>(FALLBACK_PLATFORMS);
+  // 新剧榜专属状态
+  const [newWindow, setNewWindow] = useState('7d');
+  const [newSortBy, setNewSortBy] = useState('heat');
+  const [classifyFilter, setClassifyFilter] = useState<'all' | 'classified' | 'pending'>('all');
+  const [newMeta, setNewMeta] = useState<{ total_count: number; classified_count: number; pending_count: number } | null>(null);
 
   useEffect(() => {
     apiFetch('/api/platforms')
       .then(r => r.json())
       .then((list: { name: string; is_active: number }[]) => {
         const active = list.filter(p => p.is_active).map(p => p.name);
-        if (active.length > 0) setPlatforms(['all', 'trending', ...active]);
+        if (active.length > 0) setPlatforms(['all', 'trending', 'new', ...active]);
       })
       .catch(() => {});
   }, []);
 
   const isTrending = selectedPlatform === 'trending';
+  const isNewRanking = selectedPlatform === 'new';
   const isOverall = CROSS_PLATFORM_TABS.has(selectedPlatform);
 
   const fetchData = useCallback(async (showRefresh = false) => {
@@ -197,7 +223,13 @@ export default function RankingTable({ type, title }: Props) {
       limit: isOverall ? '50' : '20',
     });
 
-    if (isOverall) {
+    if (isNewRanking) {
+      // 新剧榜：传 ranking_mode=new 以及专属参数
+      params.set('ranking_mode', 'new');
+      params.set('new_window', newWindow);
+      params.set('sort_by', newSortBy);
+      params.set('classify_filter', classifyFilter);
+    } else if (isOverall) {
       // 跨平台汇总榜：传 ranking_mode 区分总榜/趋势榜
       params.set('ranking_mode', isTrending ? 'trending' : 'total');
     } else {
@@ -221,6 +253,7 @@ export default function RankingTable({ type, title }: Props) {
       setLatestDate(result.latestDate || '');
       setAccumulating(result.dataAccumulating || false);
       setSnapshotDays(result.snapshotDays || 0);
+      setNewMeta(isNewRanking && result.meta ? result.meta : null);
       setLastUpdateTime(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch {
       setData([]);
@@ -228,7 +261,7 @@ export default function RankingTable({ type, title }: Props) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [type, selectedPlatform, timeMode, customStart, customEnd, langFilter, isOverall, isTrending]);
+  }, [type, selectedPlatform, timeMode, customStart, customEnd, langFilter, isOverall, isTrending, isNewRanking, newWindow, newSortBy, classifyFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -239,37 +272,101 @@ export default function RankingTable({ type, title }: Props) {
         <div className="flex items-center justify-between flex-wrap gap-3">
           <h1 className="text-xl font-bold text-primary-text">{title}</h1>
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Time Tabs */}
-            <div className="flex bg-primary-bg rounded-lg p-0.5 border border-primary-border">
-              {TIME_MODES.map(tm => (
-                <button
-                  key={tm.key}
-                  onClick={() => setTimeMode(tm.key)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                    timeMode === tm.key
-                      ? 'bg-primary-accent-bg text-primary-accent border border-primary-accent-border shadow-sm'
-                      : 'text-primary-text-secondary hover:text-primary-text'
-                  }`}
-                >
-                  {tm.label}
-                </button>
-              ))}
-            </div>
+            {isNewRanking ? (
+              <>
+                {/* 新剧榜：上新时间筛选 */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-primary-text-muted whitespace-nowrap">上新时间</span>
+                  <div className="flex bg-primary-bg rounded-lg p-0.5 border border-primary-border">
+                    {NEW_WINDOW_OPTIONS.map(opt => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setNewWindow(opt.key)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                          newWindow === opt.key
+                            ? 'bg-primary-accent-bg text-primary-accent border border-primary-accent-border shadow-sm'
+                            : 'text-primary-text-secondary hover:text-primary-text'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* 新剧榜：排序方式 */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-primary-text-muted whitespace-nowrap">排序</span>
+                  <div className="flex bg-primary-bg rounded-lg p-0.5 border border-primary-border">
+                    {NEW_SORT_OPTIONS.map(opt => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setNewSortBy(opt.key)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                          newSortBy === opt.key
+                            ? 'bg-primary-accent-bg text-primary-accent border border-primary-accent-border shadow-sm'
+                            : 'text-primary-text-secondary hover:text-primary-text'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* 新剧榜：显示范围（全部 / 仅已分类 / 仅待审核） */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-primary-text-muted whitespace-nowrap">显示</span>
+                  <div className="flex bg-primary-bg rounded-lg p-0.5 border border-primary-border">
+                    {NEW_CLASSIFY_OPTIONS.map(opt => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setClassifyFilter(opt.key as 'all' | 'classified' | 'pending')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                          classifyFilter === opt.key
+                            ? 'bg-amber-100 text-amber-700 border border-amber-300 shadow-sm'
+                            : 'text-primary-text-secondary hover:text-primary-text'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* 普通榜单：时间 Tabs */}
+                <div className="flex bg-primary-bg rounded-lg p-0.5 border border-primary-border">
+                  {TIME_MODES.map(tm => (
+                    <button
+                      key={tm.key}
+                      onClick={() => setTimeMode(tm.key)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                        timeMode === tm.key
+                          ? 'bg-primary-accent-bg text-primary-accent border border-primary-accent-border shadow-sm'
+                          : 'text-primary-text-secondary hover:text-primary-text'
+                      }`}
+                    >
+                      {tm.label}
+                    </button>
+                  ))}
+                </div>
 
-            {timeMode === 'custom' && (
-              <div className="flex items-center gap-1.5">
-                <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)}
-                  className="px-2 py-1.5 border border-primary-border rounded-lg bg-white text-xs focus:outline-none focus:border-primary-accent" />
-                <span className="text-xs text-primary-text-muted">至</span>
-                <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)}
-                  className="px-2 py-1.5 border border-primary-border rounded-lg bg-white text-xs focus:outline-none focus:border-primary-accent" />
-              </div>
-            )}
+                {timeMode === 'custom' && (
+                  <div className="flex items-center gap-1.5">
+                    <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)}
+                      className="px-2 py-1.5 border border-primary-border rounded-lg bg-white text-xs focus:outline-none focus:border-primary-accent" />
+                    <span className="text-xs text-primary-text-muted">至</span>
+                    <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)}
+                      className="px-2 py-1.5 border border-primary-border rounded-lg bg-white text-xs focus:outline-none focus:border-primary-accent" />
+                  </div>
+                )}
 
-            {timeMode !== 'custom' && latestDate && (
-              <span className="text-xs text-primary-text-muted whitespace-nowrap">
-                {getTimeRangeLabel(latestDate, timeMode)}
-              </span>
+                {timeMode !== 'custom' && latestDate && (
+                  <span className="text-xs text-primary-text-muted whitespace-nowrap">
+                    {getTimeRangeLabel(latestDate, timeMode)}
+                  </span>
+                )}
+              </>
             )}
 
             {/* Language Filter */}
@@ -356,9 +453,25 @@ export default function RankingTable({ type, title }: Props) {
           <svg className="w-3.5 h-3.5 shrink-0 text-primary-accent/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          {isTrending
-            ? '趋势榜：按热力增量排序，跨平台去重（同一部剧保留增量最大的平台记录）'
-            : '总榜：按当前热力值排序，跨平台去重（同一部剧保留热力值最大的平台记录）'}
+          {isNewRanking
+            ? `新剧榜：展示最近新出现的剧，按上线/入榜日期筛选，支持热力、增量、上新时间三种排序。有 first_air_date 优先用，否则用首次入榜日期。`
+            : isTrending
+              ? '趋势榜：按热力增量排序，跨平台去重（同一部剧保留增量最大的平台记录）'
+              : '总榜：按当前热力值排序，跨平台去重（同一部剧保留热力值最大的平台记录）'}
+        </div>
+      )}
+
+      {/* 新剧榜：已分类 / 待审核 数量汇总条 */}
+      {isNewRanking && newMeta && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-primary-sidebar/30 rounded-lg border border-primary-border/50 text-xs flex-wrap">
+          <span className="text-primary-text-muted font-medium">共 {newMeta.total_count} 条</span>
+          <span className="text-primary-text-muted">·</span>
+          <span className="text-green-700 font-medium">✓ 已分类 {newMeta.classified_count} 条</span>
+          <span className="text-primary-text-muted">·</span>
+          <span className="text-amber-600 font-medium">⏳ 待审核 {newMeta.pending_count} 条</span>
+          {newMeta.pending_count > 0 && (
+            <span className="text-primary-text-muted">（待审核剧尚未完成剧种分类，仅供参考，不代表已归属当前分类）</span>
+          )}
         </div>
       )}
 
@@ -373,7 +486,7 @@ export default function RankingTable({ type, title }: Props) {
             <svg className="w-12 h-12 mx-auto mb-3 text-primary-text-muted/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6m6 0h6m-6 0V9a2 2 0 012-2h2a2 2 0 012 2v10m6 0v-4a2 2 0 00-2-2h-2a2 2 0 00-2 2v4" />
             </svg>
-            {timeMode === 'yesterday' ? '暂无昨日数据' : '暂无榜单数据'}
+            {isNewRanking ? `暂无近期新剧数据（${NEW_WINDOW_OPTIONS.find(o => o.key === newWindow)?.label ?? newWindow}）` : timeMode === 'yesterday' ? '暂无昨日数据' : '暂无榜单数据'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -387,17 +500,26 @@ export default function RankingTable({ type, title }: Props) {
                   <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-20">题材</th>
                   <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-20">语种</th>
                   {isOverall && <th className="text-left py-3 px-3 font-medium text-primary-text-secondary w-32">平台</th>}
-                  <th className="text-left py-3 px-2 font-medium text-primary-text-secondary w-20">上线日期</th>
+                  <th className="text-left py-3 px-2 font-medium text-primary-text-secondary w-24">
+                    {isNewRanking ? '上线/入榜日期' : '上线日期'}
+                    {isNewRanking && newSortBy === 'new' && <span className="ml-1 text-primary-accent">↑排序</span>}
+                  </th>
                   <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20 whitespace-nowrap">投放时长</th>
-                  <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">累计热力值</th>
                   <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">
-                    {accumulating
-                      ? '增量（积累中）'
-                      : timeMode === '7days'
-                        ? (isTrending ? '7天增量↑排序' : '7天增量')
-                        : timeMode === '30days'
-                          ? (isTrending ? '30天增量↑排序' : '30天增量')
-                          : (isTrending ? '日增量↑排序' : '日增量')}
+                    {isNewRanking
+                      ? (newSortBy === 'heat' ? '当前热力↑排序' : '当前热力')
+                      : '累计热力值'}
+                  </th>
+                  <th className="text-right py-3 px-3 font-medium text-primary-text-secondary w-24">
+                    {isNewRanking
+                      ? (newSortBy === 'increment' ? '日增量↑排序' : '日增量')
+                      : accumulating
+                        ? '增量（积累中）'
+                        : timeMode === '7days'
+                          ? (isTrending ? '7天增量↑排序' : '7天增量')
+                          : timeMode === '30days'
+                            ? (isTrending ? '30天增量↑排序' : '30天增量')
+                            : (isTrending ? '日增量↑排序' : '日增量')}
                   </th>
                   <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20">原榜排名</th>
                   <th className="text-center py-3 px-2 font-medium text-primary-text-secondary w-20">投放趋势</th>
@@ -458,6 +580,9 @@ export default function RankingTable({ type, title }: Props) {
                         {item.is_ai_drama === 'real' && (
                           <span className="px-2 py-0.5 text-[11px] rounded-full bg-green-50 text-green-600 border border-green-200 whitespace-nowrap">真人剧</span>
                         )}
+                        {isNewRanking && item.classification_status === 'pending_review' && (
+                          <span className="px-2 py-0.5 text-[11px] rounded-full bg-amber-50 text-amber-600 border border-amber-200 whitespace-nowrap">待审核</span>
+                        )}
                       </td>
 
                       {/* Tags */}
@@ -515,9 +640,20 @@ export default function RankingTable({ type, title }: Props) {
                         );
                       })()}
 
-                      {/* First Air Date */}
-                      <td className="py-3 px-2 text-xs text-primary-text-secondary whitespace-nowrap">
-                        {item.first_air_date || '-'}
+                      {/* First Air Date / Effective New Date */}
+                      <td className="py-3 px-2 text-xs whitespace-nowrap">
+                        {isNewRanking ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-primary-text-secondary">
+                              {item.effective_new_date || item.first_air_date || '-'}
+                            </span>
+                            {!item.first_air_date && item.effective_new_date && (
+                              <span className="text-[10px] text-primary-text-muted">首次入榜</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-primary-text-secondary">{item.first_air_date || '-'}</span>
+                        )}
                       </td>
 
                       {/* Invest Days */}
@@ -530,7 +666,7 @@ export default function RankingTable({ type, title }: Props) {
                       {/* Heat Value */}
                       <td className="py-3 px-3 text-right">
                         <span className="font-semibold text-sm text-green-700">
-                          {formatHeat((isOverall ? item.current_heat_value : item.heat_value) || 0)}
+                          {formatHeat((isOverall ? (item.current_heat_value ?? item.heat_value) : item.heat_value) || 0)}
                         </span>
                       </td>
 
@@ -584,14 +720,16 @@ export default function RankingTable({ type, title }: Props) {
         {!loading && data.length > 0 && (
           <div className="px-4 py-3 border-t border-primary-border/50 bg-primary-sidebar/30 flex items-center justify-between">
             <span className="text-xs text-primary-text-muted">
-              {isOverall ? (isTrending ? '趋势榜' : '总榜') : selectedPlatform} · {latestDate ? `数据日期 ${latestDate}${timeMode === 'yesterday' ? '（昨日）' : timeMode === 'today' ? '（今日）' : ''}` : ''} · 共 {data.length} 条
+              {isNewRanking ? '新剧榜' : isOverall ? (isTrending ? '趋势榜' : '总榜') : selectedPlatform} · {latestDate ? `数据日期 ${latestDate}` : ''} · 共 {data.length} 条
             </span>
             <span className="text-xs text-primary-text-muted">
-              {isOverall
-                ? isTrending
-                  ? `趋势榜 · 按热力增量排序 · 跨平台去重`
-                  : `总榜 · 按当前热力值排序 · 跨平台去重`
-                : `Top ${Math.min(20, data.length)}`}
+              {isNewRanking
+                ? `新剧榜 · ${NEW_WINDOW_OPTIONS.find(o => o.key === newWindow)?.label ?? newWindow}上新 · 按${NEW_SORT_OPTIONS.find(o => o.key === newSortBy)?.label ?? newSortBy}排序 · ${NEW_CLASSIFY_OPTIONS.find(o => o.key === classifyFilter)?.label ?? '全部'} · 跨平台去重`
+                : isOverall
+                  ? isTrending
+                    ? `趋势榜 · 按热力增量排序 · 跨平台去重`
+                    : `总榜 · 按当前热力值排序 · 跨平台去重`
+                  : `Top ${Math.min(20, data.length)}`}
             </span>
           </div>
         )}

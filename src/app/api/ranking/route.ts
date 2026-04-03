@@ -55,8 +55,13 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('start_date') || '';
     const endDate = searchParams.get('end_date') || '';
     const limit = parseInt(searchParams.get('limit') || '50');
-    // 'total'：总榜（按 heat_value 排序）；'trending'：趋势榜（按 heat_increment 排序）
+    // 'total'：总榜（按 heat_value 排序）；'trending'：趋势榜（按 heat_increment 排序）；'new'：新剧榜
     const rankingMode = searchParams.get('ranking_mode') || 'total';
+    // 新剧榜专属参数
+    const newWindow = searchParams.get('new_window') || '7d'; // today | yesterday | 7d | 30d
+    const sortBy = searchParams.get('sort_by') || 'heat';     // heat | increment | new
+    // 新剧榜分类过滤：all 全部(默认) | classified 仅已分类 | pending 仅待审核
+    const classifyFilter = searchParams.get('classify_filter') || 'all';
 
     const latestDateRow = db.prepare(
       'SELECT MAX(snapshot_date) as d FROM ranking_snapshot'
@@ -181,6 +186,208 @@ export async function GET(request: NextRequest) {
       }));
 
       return NextResponse.json({ data: result, latestDate, total: result.length, dataAccumulating, snapshotDays, rankingMode: 'platform' });
+    }
+
+    // ── 新剧榜 ──────────────────────────────────────────────────────────────
+    if (rankingMode === 'new') {
+      // 取最新 snapshot 全量数据（排序/筛选均在内存中做）
+      // 新剧榜的 is_ai_drama 过滤策略：包含"匹配的类型"或"尚未分类(NULL)"
+      // 原因：新剧刚进入系统时 is_ai_drama 通常为 NULL（待审核），若严格过滤会导致
+      //       今天/昨天的新剧全部消失。新剧榜的核心价值正是发现这些未分类的新剧。
+      const newSql = `
+        SELECT
+          rs.playlet_id, rs.platform, rs.rank, rs.heat_value,
+          rs.material_count, rs.invest_days, rs.snapshot_date,
+          d.title, d.description, d.cover_url, d.language, d.is_ai_drama,
+          COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags) as tags,
+          d.first_air_date, d.creative_count
+        FROM ranking_snapshot rs
+        LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
+        WHERE rs.snapshot_date = ?${isAiDrama ? ' AND (d.is_ai_drama = ? OR d.is_ai_drama IS NULL)' : ''}
+        ORDER BY rs.heat_value DESC
+      `;
+      const newSqlParams: unknown[] = [latestDate];
+      if (isAiDrama) newSqlParams.push(isAiDrama);
+      const allLatest = db.prepare(newSql).all(...newSqlParams) as RankingRow[];
+
+      // first_seen_date：首次进入系统的日期（MIN snapshot_date）
+      const firstSeenMap = getFirstAppearances(db);
+
+      // 计算 new_window 时间范围（以 latestDate 为基准，筛 effective_new_date）
+      // Bug fix: windowEnd 必须是 let，且 yesterday 需独立设置 windowEnd = windowStart
+      const latestD = new Date(latestDate + 'T00:00:00Z');
+      let windowStart = latestDate;
+      let windowEnd = latestDate;
+      if (newWindow === 'today') {
+        // windowStart = windowEnd = latestDate（已默认）
+      } else if (newWindow === 'yesterday') {
+        const yd = new Date(latestD);
+        yd.setUTCDate(yd.getUTCDate() - 1);
+        windowStart = yd.toISOString().slice(0, 10);
+        windowEnd = windowStart; // 精确匹配昨天，不含今天
+      } else if (newWindow === '7d') {
+        const s = new Date(latestD);
+        s.setUTCDate(s.getUTCDate() - 6);
+        windowStart = s.toISOString().slice(0, 10);
+        // windowEnd = latestDate（已默认）
+      } else if (newWindow === '30d') {
+        const s = new Date(latestD);
+        s.setUTCDate(s.getUTCDate() - 29);
+        windowStart = s.toISOString().slice(0, 10);
+        // windowEnd = latestDate（已默认）
+      }
+
+      // 新剧榜 heat_increment 固定用"日增量"（最新日 vs 前一日 baseline）
+      const newBaselineDate = getBaselineDate(db, 'today', latestDate, '', '');
+      const newBaselineHeatMap = newBaselineDate ? getHeatValuesOnDate(db, newBaselineDate, isAiDrama) : null;
+
+      // 跨平台去重：key 不含 platform，始终选 heat_value 最大的记录作为代表
+      type NewEntry = {
+        item: RankingRow;
+        platforms: { name: string; rank: number }[];
+        heatIncrement: number | null;
+        maxHeatValue: number;
+        bestPlatform: string;
+        firstSeenDate: string | null;
+        effectiveNewDate: string | null;
+      };
+      const newDramaMap = new Map<string, NewEntry>();
+
+      for (const row of allLatest) {
+        const firstSeenDate = firstSeenMap.get(row.playlet_id) || null;
+        const normalizedAirDate = normalizeDateStr(row.first_air_date) || null;
+
+        // effective_new_date 判定逻辑（修复版）：
+        // - 优先用 first_air_date，但仅当它落在时间窗口内时才算"新剧"依据
+        // - 若 first_air_date 不在窗口（可能是很久以前上线的剧刚被系统收录），
+        //   则 fallback 到 first_seen_date，判断该剧是否"新进入追踪"
+        // - 两者都不在窗口内 → 不是新剧，跳过
+        const airInWindow = !!normalizedAirDate && normalizedAirDate >= windowStart && normalizedAirDate <= windowEnd;
+        const seenInWindow = !!firstSeenDate && firstSeenDate >= windowStart && firstSeenDate <= windowEnd;
+
+        if (!airInWindow && !seenInWindow) continue;
+
+        // 展示用的 effective_new_date：窗口内的 first_air_date 优先，否则用 first_seen_date
+        const effectiveNewDate = airInWindow ? normalizedAirDate! : firstSeenDate!;
+
+        let increment: number | null = null;
+        if (newBaselineHeatMap) {
+          const baseHeat = newBaselineHeatMap.get(`${row.playlet_id}:${row.platform}`);
+          if (baseHeat !== undefined) increment = row.heat_value - baseHeat;
+        }
+
+        const dramaKey = getDramaDedupeKey(row.title, row.language, row.first_air_date);
+        const existing = newDramaMap.get(dramaKey);
+
+        if (!existing) {
+          newDramaMap.set(dramaKey, {
+            item: row,
+            platforms: [{ name: row.platform, rank: row.rank }],
+            heatIncrement: increment,
+            maxHeatValue: row.heat_value,
+            bestPlatform: row.platform,
+            firstSeenDate,
+            effectiveNewDate,
+          });
+        } else {
+          if (!existing.platforms.some(p => p.name === row.platform)) {
+            existing.platforms.push({ name: row.platform, rank: row.rank });
+          }
+          // 代表记录固定选 heat_value 最大
+          if (row.heat_value > existing.maxHeatValue) {
+            existing.maxHeatValue = row.heat_value;
+            existing.item = row;
+            existing.bestPlatform = row.platform;
+            existing.firstSeenDate = firstSeenDate;
+            existing.effectiveNewDate = effectiveNewDate;
+          }
+          // 始终记录最大 heat_increment（用于排序/展示）
+          const existingInc = existing.heatIncrement ?? -Infinity;
+          const newInc = increment ?? -Infinity;
+          if (newInc > existingInc) existing.heatIncrement = increment;
+        }
+      }
+
+      // 按 sort_by 排序（对全量去重结果排序，之后再统计 meta、过滤、截断）
+      const allEntries = Array.from(newDramaMap.values())
+        .sort((a, b) => {
+          if (sortBy === 'heat') {
+            if (b.maxHeatValue !== a.maxHeatValue) return b.maxHeatValue - a.maxHeatValue;
+            const ai = a.heatIncrement ?? -Infinity, bi = b.heatIncrement ?? -Infinity;
+            if (bi !== ai) return bi - ai;
+            return (b.effectiveNewDate || '').localeCompare(a.effectiveNewDate || '');
+          } else if (sortBy === 'increment') {
+            const ai = a.heatIncrement, bi = b.heatIncrement;
+            if (ai !== null && bi !== null && ai !== bi) return bi - ai;
+            if (ai !== null && bi === null) return -1;
+            if (ai === null && bi !== null) return 1;
+            if (b.maxHeatValue !== a.maxHeatValue) return b.maxHeatValue - a.maxHeatValue;
+            return (b.effectiveNewDate || '').localeCompare(a.effectiveNewDate || '');
+          } else {
+            // sort_by === 'new'：上新时间 DESC → heat_value DESC → increment DESC
+            const dc = (b.effectiveNewDate || '').localeCompare(a.effectiveNewDate || '');
+            if (dc !== 0) return dc;
+            if (b.maxHeatValue !== a.maxHeatValue) return b.maxHeatValue - a.maxHeatValue;
+            const ai = a.heatIncrement ?? -Infinity, bi = b.heatIncrement ?? -Infinity;
+            return bi - ai;
+          }
+        });
+
+      // meta 统计：在 classify_filter 过滤之前计算，反映完整数量
+      const metaTotal = allEntries.length;
+      const metaClassified = allEntries.filter(e => !!e.item.is_ai_drama).length;
+      const metaPending = metaTotal - metaClassified;
+
+      // 按 classify_filter 筛选（默认 all 不过滤）
+      let filteredEntries = allEntries;
+      if (classifyFilter === 'classified') {
+        filteredEntries = allEntries.filter(e => !!e.item.is_ai_drama);
+      } else if (classifyFilter === 'pending') {
+        filteredEntries = allEntries.filter(e => !e.item.is_ai_drama);
+      }
+
+      const newSorted = filteredEntries.slice(0, limit);
+
+      const newSparklines = getInvestTrendSparklines(
+        db, newSorted.map(e => ({ playlet_id: e.item.playlet_id, platform: e.bestPlatform }))
+      );
+
+      const newResult = newSorted.map((entry, index) => {
+        // is_ai_drama 有值 → 已分类；NULL → 待审核
+        const classificationStatus = entry.item.is_ai_drama ? 'classified' : 'pending_review';
+        return {
+          ...entry.item,
+          rank: index + 1,
+          orig_rank: entry.item.rank,
+          prev_rank: null,
+          rank_change: null,
+          is_new: true,
+          heat_increment: entry.heatIncrement,
+          current_heat_value: entry.maxHeatValue,
+          platforms_list: entry.platforms,
+          best_platform: entry.bestPlatform,
+          first_seen_date: entry.firstSeenDate,
+          effective_new_date: entry.effectiveNewDate,
+          classification_status: classificationStatus as 'classified' | 'pending_review',
+          sparkline: newSparklines.get(entry.item.playlet_id) || [],
+        };
+      });
+
+      return NextResponse.json({
+        data: newResult,
+        latestDate,
+        total: newResult.length,
+        dataAccumulating: false,
+        snapshotDays,
+        rankingMode: 'new',
+        newWindow,
+        sortBy,
+        meta: {
+          total_count: metaTotal,
+          classified_count: metaClassified,
+          pending_count: metaPending,
+        },
+      });
     }
 
     // 总榜 / 趋势榜：跨平台去重聚合
