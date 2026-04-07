@@ -177,7 +177,7 @@ function getTopTags(dramas: DramaStat[], n: number): string[] {
   const cnt = new Map<string, number>();
   for (const d of dramas)
     for (const t of d.tags) if (t) cnt.set(t, (cnt.get(t) ?? 0) + 1);
-  return [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([t]) => t);
+  return Array.from(cnt.entries()).sort((a, b) => b[1] - a[1]).slice(0, n).map(([t]) => t);
 }
 
 // ─── 对比周期计算 ──────────────────────────────────────────────────────────────
@@ -288,15 +288,15 @@ export function calculateDramaWindowMetrics(
   }
 
   const result: DramaStat[] = [];
-  for (const [id, e] of grouped) {
-    const sortedDates = [...e.dates].sort();
+  for (const [id, e] of Array.from(grouped)) {
+    const sortedDates = Array.from(e.dates).sort();
     const sampleDays = sortedDates.length;
     const earliest = sortedDates[0];
     const latest = sortedDates[sortedDates.length - 1];
     const earliestHeat = e.heatByDate.get(earliest) ?? 0;
     const latestHeat = e.heatByDate.get(latest) ?? 0;
     const heatIncrement = sampleDays > 1 ? latestHeat - earliestHeat : null;
-    const bestRank = Math.min(...[...e.rankByDate.values()]);
+    const bestRank = Math.min(...Array.from(e.rankByDate.values()));
     const currentRank = e.rankByDate.get(filters.endDate) ?? e.rankByDate.get(latest) ?? null;
     const repRow = e.rows.filter(r => r.snapshot_date === latest).sort((a, b) => b.heat_value - a.heat_value)[0] ?? e.rows[0];
     const firstSeenDate = firstSeenMap.get(id) ?? null;
@@ -310,7 +310,7 @@ export function calculateDramaWindowMetrics(
       language: repRow?.language ?? '',
       dramaType: repRow?.is_ai_drama ?? '',
       bestPlatform: repRow?.platform ?? '',
-      allPlatforms: [...e.platforms],
+      allPlatforms: Array.from(e.platforms),
       currentRank,
       bestRank,
       latestHeat,
@@ -334,7 +334,7 @@ export function summarizePlatformDistribution(dramas: DramaStat[]): Distribution
   for (const d of dramas)
     for (const p of d.allPlatforms) cnt.set(p, (cnt.get(p) ?? 0) + 1);
   const total = dramas.length;
-  return [...cnt.entries()]
+  return Array.from(cnt.entries())
     .sort((a, b) => b[1] - a[1])
     .map(([name, value]) => ({ name, value, ratio: total > 0 ? Math.round(value / total * 100) : 0 }));
 }
@@ -344,7 +344,7 @@ export function summarizeGenreDistribution(dramas: DramaStat[]): DistributionIte
   for (const d of dramas)
     for (const t of d.tags) if (t) cnt.set(t, (cnt.get(t) ?? 0) + 1);
   const total = dramas.length;
-  return [...cnt.entries()]
+  return Array.from(cnt.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 12)
     .map(([name, value]) => ({ name, value, ratio: total > 0 ? Math.round(value / total * 100) : 0 }));

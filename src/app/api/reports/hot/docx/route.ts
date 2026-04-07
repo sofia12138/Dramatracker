@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     const platform = filters.platform && filters.platform !== 'all' ? `-${filters.platform}` : '';
     const filename = `hot-analysis${platform}-${filters.startDate}_to_${filters.endDate}.docx`;
 
-    return new NextResponse(buffer, {
+    return new NextResponse(new Uint8Array(buffer), {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,

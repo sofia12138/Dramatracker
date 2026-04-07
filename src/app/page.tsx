@@ -863,7 +863,7 @@ function HotReportCard({
         <div className="space-y-4">
           {/* 说明栏 */}
           <div className="text-xs text-primary-text-muted bg-orange-50/60 rounded-lg px-3 py-2 border border-orange-100">
-            本报告以 <strong className="text-orange-700">AI真人剧</strong> 和 <strong className="text-orange-700">AI漫剧</strong> 为主分析对象，聚焦识别"哪些内容正在跑出来、为什么"。
+            本报告以 <strong className="text-orange-700">AI真人剧</strong> 和 <strong className="text-orange-700">AI漫剧</strong> 为主分析对象，聚焦识别&quot;哪些内容正在跑出来、为什么&quot;。
             {report.unclassifiedCount > 0 && (
               <span className="ml-2 text-amber-700">另有 {report.unclassifiedCount} 部未分类剧集未纳入主分析。</span>
             )}
@@ -896,7 +896,7 @@ function HotReportCard({
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
                 AI真人剧 vs AI漫剧 · 爆款方法论对比
               </h3>
-              <p className="text-[11px] text-emerald-700 mb-2">聚焦两种内容形态在"跑量能力"上的差异，可直接用于选题与投放决策参考。</p>
+              <p className="text-[11px] text-emerald-700 mb-2">聚焦两种内容形态在&quot;跑量能力&quot;上的差异，可直接用于选题与投放决策参考。</p>
               <ul className="space-y-1.5">
                 {report.crossTrackComparison.map((c, i) => (
                   <li key={i} className="text-xs text-primary-text flex gap-2">
@@ -1001,7 +1001,7 @@ function MarketReportCard({
         <div className="space-y-4">
           {/* 说明栏 */}
           <div className="text-xs text-primary-text-muted bg-indigo-50/60 rounded-lg px-3 py-2 border border-indigo-100">
-            本报告聚焦 <strong className="text-indigo-700">AI真人剧</strong> 与 <strong className="text-indigo-700">AI漫剧</strong> 的市场结构变化，重点回答"市场发生了什么、机会在哪里"。
+            本报告聚焦 <strong className="text-indigo-700">AI真人剧</strong> 与 <strong className="text-indigo-700">AI漫剧</strong> 的市场结构变化，重点回答&quot;市场发生了什么、机会在哪里&quot;。
             {report.unclassifiedCount > 0 && (
               <span className="ml-2 text-amber-700">另有 {report.unclassifiedCount} 部未分类剧集未纳入主分析。</span>
             )}

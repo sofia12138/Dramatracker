@@ -1,9 +1,17 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
-    const { registerExitHandler } = await import('./lib/db');
-    registerExitHandler();
+    try {
+      const { registerExitHandler } = await import('./lib/db');
+      registerExitHandler();
+    } catch (e) {
+      console.error('[instrumentation] db registerExitHandler failed', e);
+    }
 
-    const { startScheduler } = await import('./lib/scheduler');
-    startScheduler();
+    try {
+      const { startScheduler } = await import('./lib/scheduler');
+      startScheduler();
+    } catch (e) {
+      console.error('[instrumentation] startScheduler failed', e);
+    }
   }
 }
