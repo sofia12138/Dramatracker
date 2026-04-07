@@ -26,6 +26,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files
+.env
 .env*.local
 
 # vercel
@@ -39,7 +40,15 @@ next-env.d.ts
 data/*.db
 data/*.db-wal
 data/*.db-shm
+data/*.damaged
 data/config.json
+
+# local data scripts and backups
+data/_*.js
+data/backup/
+data/exports/
+data/tmp/
+"data - 副本/"
 
 # logs
 logs/
