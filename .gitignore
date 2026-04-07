@@ -48,7 +48,7 @@ data/_*.js
 data/backup/
 data/exports/
 data/tmp/
-"data - 副本/"
+data - 副本/
 
 # logs
 logs/
