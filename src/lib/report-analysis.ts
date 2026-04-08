@@ -153,8 +153,19 @@ interface DramaStat {
 function parseTags(raw: string | null): string[] {
   if (!raw) return [];
   try {
-    const arr = JSON.parse(raw);
-    if (Array.isArray(arr)) return arr.filter((t): t is string => typeof t === 'string');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.filter((t): t is string => typeof t === 'string');
+    // 兼容 {systemTags: {category: [tag,...]}, customTags: [...]} 格式
+    if (parsed && typeof parsed === 'object') {
+      const result: string[] = [];
+      if (parsed.customTags && Array.isArray(parsed.customTags)) result.push(...parsed.customTags);
+      if (parsed.systemTags && typeof parsed.systemTags === 'object') {
+        for (const tags of Object.values(parsed.systemTags)) {
+          if (Array.isArray(tags)) result.push(...(tags as string[]));
+        }
+      }
+      return result.filter((t): t is string => typeof t === 'string');
+    }
   } catch { /* ignore */ }
   return [];
 }
