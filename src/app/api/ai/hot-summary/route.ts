@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { getDb } from '@/lib/db';
 import { getUserFromRequest } from '@/lib/api-auth';
 import { hasPermission } from '@/lib/auth';
+import { getSqliteOnlyParts } from '@/lib/db-compat';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -86,13 +87,16 @@ export async function POST(request: NextRequest) {
     ).all() as { playlet_id: string; first_date: string }[];
     for (const r of faRows) firstAppearanceMap.set(r.playlet_id, r.first_date);
 
+    const { reviewJoin, isAiCol } = getSqliteOnlyParts();
+
     const queryTop20 = (typeFilter: string): CompactDrama[] => {
       const rawList = db.prepare(`
         SELECT d.title, rs.platform, rs.rank, rs.heat_value,
           d.language, d.tags, rs.material_count, rs.invest_days, d.playlet_id
         FROM ranking_snapshot rs
         INNER JOIN drama d ON rs.playlet_id = d.playlet_id
-        WHERE rs.snapshot_date = ? AND d.is_ai_drama = ?
+        ${reviewJoin}
+        WHERE rs.snapshot_date = ? AND ${isAiCol} = ?
         ORDER BY rs.heat_value DESC
         LIMIT 40
       `).all(latestDate, typeFilter) as RawDrama[];

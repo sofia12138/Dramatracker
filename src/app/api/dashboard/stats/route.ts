@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { isMysqlMode, query as mysqlQuery } from '@/lib/mysql';
+import {
+  countDramasByType,
+  queryPlatformAiCount,
+  queryLanguageDistribution,
+  queryTagsByAiType,
+  queryHeatGrowthTop5,
+} from '@/lib/db-compat';
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,8 +18,15 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('start_date') || '';
     const endDate = searchParams.get('end_date') || '';
 
-    const latestRow = db.prepare('SELECT MAX(snapshot_date) as d FROM ranking_snapshot').get() as { d: string | null };
-    const latestDate = latestRow?.d || new Date().toISOString().slice(0, 10);
+    // MySQL 模式：ranking_snapshot 使用 date_key 列；SQLite 使用 snapshot_date 列
+    let latestDate: string;
+    if (isMysqlMode()) {
+      const [mysqlLatest] = await mysqlQuery<{ d: string | null }>('SELECT MAX(date_key) as d FROM ranking_snapshot');
+      latestDate = mysqlLatest?.d || new Date().toISOString().slice(0, 10);
+    } else {
+      const latestRow = db.prepare('SELECT MAX(snapshot_date) as d FROM ranking_snapshot').get() as { d: string | null };
+      latestDate = latestRow?.d || new Date().toISOString().slice(0, 10);
+    }
 
     let dateFrom = latestDate;
     let dateTo = latestDate;
@@ -27,8 +42,11 @@ export async function GET(request: NextRequest) {
 
     // === Overview cards ===
     const platformCount = (db.prepare('SELECT COUNT(*) as c FROM platforms WHERE is_active = 1').get() as { c: number }).c;
-    const aiRealCount = (db.prepare("SELECT COUNT(*) as c FROM drama WHERE is_ai_drama = 'ai_real'").get() as { c: number }).c;
-    const aiMangaCount = (db.prepare("SELECT COUNT(*) as c FROM drama WHERE is_ai_drama = 'ai_manga'").get() as { c: number }).c;
+    // is_ai_drama 路由到 drama_review（MySQL）或 drama（SQLite）
+    const [aiRealCount, aiMangaCount] = await Promise.all([
+      countDramasByType('ai_real'),
+      countDramasByType('ai_manga'),
+    ]);
 
     const weekStart = getWeekStart(latestDate);
     const newThisWeek = (db.prepare(`
@@ -59,17 +77,8 @@ export async function GET(request: NextRequest) {
       LIMIT 1
     `).get(weekStart, weekStart) as { title: string; increment: number } | undefined;
 
-    // === Chart 1: Platform AI drama count ===
-    const platformAiRows = db.prepare(`
-      SELECT rs.platform,
-        d.is_ai_drama,
-        COUNT(DISTINCT d.playlet_id) as cnt
-      FROM ranking_snapshot rs
-      INNER JOIN drama d ON rs.playlet_id = d.playlet_id
-      WHERE rs.snapshot_date >= ? AND rs.snapshot_date <= ?
-        AND d.is_ai_drama IN ('ai_real', 'ai_manga')
-      GROUP BY rs.platform, d.is_ai_drama
-    `).all(dateFrom, dateTo) as { platform: string; is_ai_drama: string; cnt: number }[];
+    // === Chart 1: Platform AI drama count（兼容 drama_review）===
+    const platformAiRows = await queryPlatformAiCount({ dateFrom, dateTo });
 
     const platformAiCount = PLATFORMS.map(p => {
       const aiReal = platformAiRows.find(r => r.platform === p && r.is_ai_drama === 'ai_real')?.cnt || 0;
@@ -77,28 +86,12 @@ export async function GET(request: NextRequest) {
       return { platform: p, ai_real: aiReal, ai_manga: aiManga };
     });
 
-    // === Chart 2: Language distribution ===
-    const langRows = db.prepare(`
-      SELECT d.language, COUNT(DISTINCT d.playlet_id) as cnt
-      FROM drama d
-      INNER JOIN ranking_snapshot rs ON d.playlet_id = rs.playlet_id
-      WHERE rs.snapshot_date >= ? AND rs.snapshot_date <= ?
-        AND d.is_ai_drama IN ('ai_real', 'ai_manga')
-        AND d.language IS NOT NULL AND d.language != ''
-      GROUP BY d.language
-      ORDER BY cnt DESC
-    `).all(dateFrom, dateTo) as { language: string; cnt: number }[];
+    // === Chart 2: Language distribution（兼容 drama_review）===
+    const langRows = await queryLanguageDistribution({ dateFrom, dateTo });
 
-    // === Chart 3: Tag distribution by type (top 5 each) ===
-    const getTagsByType = (aiType: string): { tag: string; count: number }[] => {
-      const rows = db.prepare(`
-        SELECT DISTINCT d.tags
-        FROM drama d
-        INNER JOIN ranking_snapshot rs ON d.playlet_id = rs.playlet_id
-        WHERE rs.snapshot_date >= ? AND rs.snapshot_date <= ?
-          AND d.is_ai_drama = ?
-          AND d.tags IS NOT NULL AND d.tags != '[]'
-      `).all(dateFrom, dateTo, aiType) as { tags: string }[];
+    // === Chart 3: Tag distribution by type（兼容 drama_review）===
+    const getTagsByType = async (aiType: string): Promise<{ tag: string; count: number }[]> => {
+      const rows = await queryTagsByAiType({ dateFrom, dateTo, aiType });
 
       const m = new Map<string, number>();
       for (const row of rows) {
@@ -112,8 +105,8 @@ export async function GET(request: NextRequest) {
     };
 
     const tagDistribution = {
-      ai_real: getTagsByType('ai_real'),
-      ai_comic: getTagsByType('ai_manga'),
+      ai_real:  await getTagsByType('ai_real'),
+      ai_comic: await getTagsByType('ai_manga'),
     };
 
     // combined for backward compat
@@ -174,32 +167,8 @@ export async function GET(request: NextRequest) {
       return result;
     });
 
-    // === Heat growth Top5 (current 7d vs previous 7d) ===
-    const heatGrowthTop5 = db.prepare(`
-      SELECT d.title,
-        COALESCE(cur.heat, 0) as cur_heat,
-        COALESCE(prev.heat, 0) as prev_heat,
-        COALESCE(cur.heat, 0) - COALESCE(prev.heat, 0) as increment
-      FROM drama d
-      INNER JOIN (
-        SELECT playlet_id, MAX(heat_value) as heat
-        FROM ranking_snapshot
-        WHERE snapshot_date >= ? AND snapshot_date <= ?
-        GROUP BY playlet_id
-      ) cur ON d.playlet_id = cur.playlet_id
-      LEFT JOIN (
-        SELECT playlet_id, MAX(heat_value) as heat
-        FROM ranking_snapshot
-        WHERE snapshot_date >= ? AND snapshot_date < ?
-        GROUP BY playlet_id
-      ) prev ON d.playlet_id = prev.playlet_id
-      WHERE d.is_ai_drama IN ('ai_real', 'ai_manga')
-        AND COALESCE(prev.heat, 0) > 0
-      ORDER BY increment DESC
-      LIMIT 5
-    `).all(dateFrom, dateTo, getOffsetDate(dateFrom, -7), dateFrom) as {
-      title: string; cur_heat: number; prev_heat: number; increment: number;
-    }[];
+    // === Heat growth Top5（兼容 drama_review）===
+    const heatGrowthTop5 = await queryHeatGrowthTop5({ dateFrom, dateTo });
 
     const heatTop5 = heatGrowthTop5.map(r => ({
       title: r.title,

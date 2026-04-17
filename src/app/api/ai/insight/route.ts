@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { getDb } from '@/lib/db';
 import { getUserFromRequest } from '@/lib/api-auth';
 import { hasPermission } from '@/lib/auth';
+import { getSqliteOnlyParts } from '@/lib/db-compat';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -76,6 +77,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '暂无榜单数据' }, { status: 400 });
     }
 
+    const { reviewJoin, isAiCol } = getSqliteOnlyParts();
     const rawDramas = db.prepare(`
       SELECT
         d.title,
@@ -89,8 +91,9 @@ export async function POST(request: NextRequest) {
         d.playlet_id
       FROM ranking_snapshot rs
       INNER JOIN drama d ON rs.playlet_id = d.playlet_id
+      ${reviewJoin}
       WHERE rs.snapshot_date = ?
-        AND d.is_ai_drama IN ('ai_real', 'ai_manga')
+        AND ${isAiCol} IN ('ai_real', 'ai_manga')
       ORDER BY rs.heat_value DESC
       LIMIT 30
     `).all(latestDate) as {

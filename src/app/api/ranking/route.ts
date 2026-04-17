@@ -48,6 +48,14 @@ function getDramaDedupeKey(title: unknown, language: unknown, firstAirDate: unkn
 export async function GET(request: NextRequest) {
   try {
     const db = getDb();
+
+    // ranking 路由始终读 SQLite（getDb()），无论是否启用 MySQL 模式。
+    // MySQL 模式下新增的抓取数据通过 sync API 写入 MySQL，
+    // 但排行榜读取路径在第一阶段灰度切换中保持 SQLite 不变。
+    // drama_review JOIN 只在 MySQL 连接上有效，此处绝对不注入。
+    const reviewJoin = '';
+    const isAiCol = 'd.is_ai_drama';
+
     const { searchParams } = new URL(request.url);
     const platform = searchParams.get('platform') || '';
     const isAiDrama = searchParams.get('is_ai_drama') || '';
@@ -102,7 +110,7 @@ export async function GET(request: NextRequest) {
 
     let whereClause = dateFilter;
     if (isAiDrama) {
-      whereClause += ' AND d.is_ai_drama = ?';
+      whereClause += ` AND ${isAiCol} = ?`;
       params.push(isAiDrama);
     }
 
@@ -120,11 +128,12 @@ export async function GET(request: NextRequest) {
           MAX(rs.material_count) as material_count,
           MAX(rs.invest_days) as invest_days,
           MAX(rs.snapshot_date) as snapshot_date,
-          d.title, d.description, d.cover_url, d.language, d.is_ai_drama,
+          d.title, d.description, d.cover_url, d.language, ${isAiCol} as is_ai_drama,
           COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags) as tags,
           d.first_air_date, d.creative_count
         FROM ranking_snapshot rs
         LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
+        ${reviewJoin}
         WHERE ${whereClause}
         GROUP BY rs.playlet_id, rs.platform
         ${minAppearances > 0 ? `HAVING COUNT(DISTINCT rs.snapshot_date) >= ${minAppearances}` : ''}
@@ -146,11 +155,11 @@ export async function GET(request: NextRequest) {
         .sort((a, b) => a.rank - b.rank);
 
       const effectiveMode = dataAccumulating ? 'today' : mode;
-      const prevData = getPreviousPeriodRanks(db, platform, isAiDrama, effectiveMode, latestDate, startDate, endDate);
+      const prevData = getPreviousPeriodRanks(db, platform, isAiDrama, effectiveMode, latestDate, startDate, endDate, isMySQL);
       const firstAppearances = getFirstAppearances(db);
       const periodStart = computePeriodStartDate(effectiveMode, latestDate, startDate);
       const baselineDate = getBaselineDate(db, effectiveMode, latestDate, startDate, endDate);
-      const baselineHeatMap = baselineDate ? getHeatValuesOnDate(db, baselineDate, isAiDrama) : null;
+      const baselineHeatMap = baselineDate ? getHeatValuesOnDate(db, baselineDate, isAiDrama, isMySQL) : null;
 
       const enriched = dedupedRows.map((item) => {
         const prev = prevData.get(`${item.playlet_id}:${item.platform}`);
@@ -198,12 +207,13 @@ export async function GET(request: NextRequest) {
         SELECT
           rs.playlet_id, rs.platform, rs.rank, rs.heat_value,
           rs.material_count, rs.invest_days, rs.snapshot_date,
-          d.title, d.description, d.cover_url, d.language, d.is_ai_drama,
+          d.title, d.description, d.cover_url, d.language, ${isAiCol} as is_ai_drama,
           COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags) as tags,
           d.first_air_date, d.creative_count
         FROM ranking_snapshot rs
         LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
-        WHERE rs.snapshot_date = ?${isAiDrama ? ' AND (d.is_ai_drama = ? OR d.is_ai_drama IS NULL)' : ''}
+        ${reviewJoin}
+        WHERE rs.snapshot_date = ?${isAiDrama ? ` AND (${isAiCol} = ? OR ${isAiCol} IS NULL)` : ''}
         ORDER BY rs.heat_value DESC
       `;
       const newSqlParams: unknown[] = [latestDate];
@@ -239,7 +249,7 @@ export async function GET(request: NextRequest) {
 
       // 新剧榜 heat_increment 固定用"日增量"（最新日 vs 前一日 baseline）
       const newBaselineDate = getBaselineDate(db, 'today', latestDate, '', '');
-      const newBaselineHeatMap = newBaselineDate ? getHeatValuesOnDate(db, newBaselineDate, isAiDrama) : null;
+      const newBaselineHeatMap = newBaselineDate ? getHeatValuesOnDate(db, newBaselineDate, isAiDrama, isMySQL) : null;
 
       // 跨平台去重：key 不含 platform，始终选 heat_value 最大的记录作为代表
       type NewEntry = {
@@ -400,11 +410,12 @@ export async function GET(request: NextRequest) {
         rs.material_count,
         rs.invest_days,
         rs.snapshot_date,
-        d.title, d.description, d.cover_url, d.language, d.is_ai_drama,
+        d.title, d.description, d.cover_url, d.language, ${isAiCol} as is_ai_drama,
         COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags) as tags,
         d.first_air_date, d.creative_count
       FROM ranking_snapshot rs
       LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
+      ${reviewJoin}
       WHERE ${whereClause}
       ORDER BY rs.heat_value DESC
     `;
@@ -424,7 +435,7 @@ export async function GET(request: NextRequest) {
     const firstAppearances = getFirstAppearances(db);
     const periodStart = computePeriodStartDate(effectiveMode, latestDate, startDate);
     const baselineDate = getBaselineDate(db, effectiveMode, latestDate, startDate, endDate);
-    const baselineHeatMap = baselineDate ? getHeatValuesOnDate(db, baselineDate, isAiDrama) : null;
+    const baselineHeatMap = baselineDate ? getHeatValuesOnDate(db, baselineDate, isAiDrama, isMySQL) : null;
 
     // Deduplicate across platforms:
     // - total mode:   keep the record with max heat_value as representative
@@ -501,7 +512,7 @@ export async function GET(request: NextRequest) {
       })
       .slice(0, limit);
 
-    const prevRankMap = getPreviousPeriodOverallRanks(db, isAiDrama, effectiveMode, latestDate, startDate, endDate);
+    const prevRankMap = getPreviousPeriodOverallRanks(db, isAiDrama, effectiveMode, latestDate, startDate, endDate, isMySQL);
 
     const sparklines = getInvestTrendSparklines(
       db, sorted.map(e => ({ playlet_id: e.item.playlet_id, platform: e.bestPlatform }))
@@ -542,9 +553,12 @@ function getPreviousPeriodRanks(
   mode: string,
   latestDate: string,
   startDate: string,
-  endDate: string
+  endDate: string,
+  isMySQL = false,
 ) {
   const map = new Map<string, { rank: number }>();
+  const reviewJoin = isMySQL ? 'LEFT JOIN drama_review dr ON d.id = dr.drama_id' : '';
+  const isAiCol = isMySQL ? 'dr.is_ai_drama' : 'd.is_ai_drama';
   let prevDateFilter = '';
   const params: unknown[] = [];
 
@@ -574,7 +588,7 @@ function getPreviousPeriodRanks(
     params.push(platform);
   }
   if (isAiDrama) {
-    where += ' AND d.is_ai_drama = ?';
+    where += ` AND ${isAiCol} = ?`;
     params.push(isAiDrama);
   }
 
@@ -582,6 +596,7 @@ function getPreviousPeriodRanks(
     SELECT rs.playlet_id, rs.platform, MIN(rs.rank) as rank
     FROM ranking_snapshot rs
     LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
+    ${reviewJoin}
     WHERE ${where}
     GROUP BY rs.playlet_id, rs.platform
   `;
@@ -601,9 +616,12 @@ function getPreviousHeatValues(
   mode: string,
   latestDate: string,
   startDate: string,
-  endDate: string
+  endDate: string,
+  isMySQL = false,
 ) {
   const map = new Map<string, number>();
+  const reviewJoin = isMySQL ? 'LEFT JOIN drama_review dr ON d.id = dr.drama_id' : '';
+  const isAiCol = isMySQL ? 'dr.is_ai_drama' : 'd.is_ai_drama';
   let prevDateFilter = '';
   const params: unknown[] = [];
 
@@ -629,7 +647,7 @@ function getPreviousHeatValues(
 
   let where = prevDateFilter;
   if (isAiDrama) {
-    where += ' AND d.is_ai_drama = ?';
+    where += ` AND ${isAiCol} = ?`;
     params.push(isAiDrama);
   }
 
@@ -637,6 +655,7 @@ function getPreviousHeatValues(
     SELECT rs.playlet_id, rs.platform, MAX(rs.heat_value) as heat_value
     FROM ranking_snapshot rs
     LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
+    ${reviewJoin}
     WHERE ${where}
     GROUP BY rs.playlet_id, rs.platform
   `;
@@ -656,9 +675,10 @@ function getPreviousPeriodOverallRanks(
   mode: string,
   latestDate: string,
   startDate: string,
-  endDate: string
+  endDate: string,
+  isMySQL = false,
 ) {
-  const prevHeatMap = getPreviousHeatValues(db, isAiDrama, mode, latestDate, startDate, endDate);
+  const prevHeatMap = getPreviousHeatValues(db, isAiDrama, mode, latestDate, startDate, endDate, isMySQL);
   const dramaHeats = new Map<string, number>();
   prevHeatMap.forEach((heat, key) => {
     const pid = key.split(':')[0];
@@ -781,17 +801,21 @@ function getHeatValuesOnDate(
   db: ReturnType<typeof getDb>,
   baselineDate: string,
   isAiDrama: string,
+  isMySQL = false,
 ): Map<string, number> {
   const map = new Map<string, number>();
+  const reviewJoin = isMySQL ? 'LEFT JOIN drama_review dr ON d.id = dr.drama_id' : '';
+  const isAiCol = isMySQL ? 'dr.is_ai_drama' : 'd.is_ai_drama';
   const params: unknown[] = [baselineDate];
   let where = 'rs.snapshot_date = ?';
-  if (isAiDrama) { where += ' AND d.is_ai_drama = ?'; params.push(isAiDrama); }
+  if (isAiDrama) { where += ` AND ${isAiCol} = ?`; params.push(isAiDrama); }
 
   try {
     const rows = db.prepare(`
       SELECT rs.playlet_id, rs.platform, MAX(rs.heat_value) as heat_value
       FROM ranking_snapshot rs
       LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
+      ${reviewJoin}
       WHERE ${where}
       GROUP BY rs.playlet_id, rs.platform
     `).all(...params) as { playlet_id: string; platform: string; heat_value: number }[];

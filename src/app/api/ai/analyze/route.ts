@@ -9,6 +9,7 @@ import {
   buildHotAnalysisPrompt, buildWeeklyReportPrompt,
   type AnalysisType,
 } from '@/lib/ai';
+import { getSqliteOnlyParts } from '@/lib/db-compat';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -117,6 +118,7 @@ function buildPrompt(db: ReturnType<typeof getDb>, type: AnalysisType, params?: 
 }
 
 function buildInsightData(db: ReturnType<typeof getDb>): string {
+  const { reviewJoin, isAiCol } = getSqliteOnlyParts();
   const latestDate = (db.prepare('SELECT MAX(snapshot_date) as d FROM ranking_snapshot').get() as { d: string })?.d || '';
   const weekStart = getWeekStart(latestDate);
 
@@ -124,7 +126,8 @@ function buildInsightData(db: ReturnType<typeof getDb>): string {
     SELECT d.title, rs.platform, MAX(rs.heat_value) as heat
     FROM ranking_snapshot rs
     INNER JOIN drama d ON rs.playlet_id = d.playlet_id
-    WHERE rs.snapshot_date >= ? AND d.is_ai_drama IN ('ai_real','ai_manga')
+    ${reviewJoin}
+    WHERE rs.snapshot_date >= ? AND ${isAiCol} IN ('ai_real','ai_manga')
     GROUP BY d.playlet_id, rs.platform
     ORDER BY heat DESC LIMIT 10
   `).all(weekStart) as { title: string; platform: string; heat: number }[];
@@ -137,8 +140,9 @@ function buildInsightData(db: ReturnType<typeof getDb>): string {
       ), 0) as increment
     FROM ranking_snapshot rs
     INNER JOIN drama d ON rs.playlet_id = d.playlet_id
+    ${reviewJoin}
     WHERE rs.snapshot_date >= ?
-      AND d.is_ai_drama IN ('ai_real', 'ai_manga')
+      AND ${isAiCol} IN ('ai_real', 'ai_manga')
     GROUP BY rs.playlet_id, rs.platform
     ORDER BY increment DESC LIMIT 5
   `).all(weekStart, weekStart) as { title: string; platform: string; increment: number }[];
@@ -147,8 +151,9 @@ function buildInsightData(db: ReturnType<typeof getDb>): string {
     SELECT COUNT(DISTINCT rs.playlet_id) as c
     FROM ranking_snapshot rs
     INNER JOIN drama d ON rs.playlet_id = d.playlet_id
+    ${reviewJoin}
     WHERE rs.snapshot_date >= ?
-      AND d.is_ai_drama IN ('ai_real', 'ai_manga')
+      AND ${isAiCol} IN ('ai_real', 'ai_manga')
       AND rs.playlet_id NOT IN (
         SELECT DISTINCT playlet_id FROM ranking_snapshot WHERE snapshot_date < ?
       )
@@ -157,7 +162,8 @@ function buildInsightData(db: ReturnType<typeof getDb>): string {
   const tagRows = db.prepare(`
     SELECT d.tags FROM drama d
     INNER JOIN ranking_snapshot rs ON d.playlet_id = rs.playlet_id
-    WHERE rs.snapshot_date >= ? AND d.is_ai_drama IN ('ai_real','ai_manga') AND d.tags != '[]'
+    ${reviewJoin}
+    WHERE rs.snapshot_date >= ? AND ${isAiCol} IN ('ai_real','ai_manga') AND d.tags != '[]'
     GROUP BY d.playlet_id
   `).all(weekStart) as { tags: string }[];
 
@@ -170,7 +176,8 @@ function buildInsightData(db: ReturnType<typeof getDb>): string {
   const langDistribution = db.prepare(`
     SELECT d.language, COUNT(DISTINCT d.playlet_id) as cnt
     FROM drama d INNER JOIN ranking_snapshot rs ON d.playlet_id = rs.playlet_id
-    WHERE rs.snapshot_date >= ? AND d.is_ai_drama IN ('ai_real','ai_manga') AND d.language IS NOT NULL
+    ${reviewJoin}
+    WHERE rs.snapshot_date >= ? AND ${isAiCol} IN ('ai_real','ai_manga') AND d.language IS NOT NULL
     GROUP BY d.language ORDER BY cnt DESC
   `).all(weekStart) as { language: string; cnt: number }[];
 
@@ -206,6 +213,7 @@ function buildDramaReviewData(db: ReturnType<typeof getDb>, playletId: string): 
 }
 
 function buildHotAnalysisData(db: ReturnType<typeof getDb>): string {
+  const { reviewJoin, isAiCol } = getSqliteOnlyParts();
   const latestDate = (db.prepare('SELECT MAX(snapshot_date) as d FROM ranking_snapshot').get() as { d: string })?.d || '';
   const weekStart = getWeekStart(latestDate);
 
@@ -218,7 +226,8 @@ function buildHotAnalysisData(db: ReturnType<typeof getDb>): string {
       ), 0) as heatIncrement
     FROM ranking_snapshot rs
     INNER JOIN drama d ON rs.playlet_id = d.playlet_id
-    WHERE d.is_ai_drama IN ('ai_real','ai_manga')
+    ${reviewJoin}
+    WHERE ${isAiCol} IN ('ai_real','ai_manga')
     GROUP BY d.playlet_id
     ORDER BY MAX(rs.heat_value) DESC
     LIMIT 20
@@ -234,6 +243,7 @@ function buildHotAnalysisData(db: ReturnType<typeof getDb>): string {
 }
 
 function buildWeeklyReportData(db: ReturnType<typeof getDb>): string {
+  const { reviewJoin, isAiCol } = getSqliteOnlyParts();
   const latestDate = (db.prepare('SELECT MAX(snapshot_date) as d FROM ranking_snapshot').get() as { d: string })?.d || '';
   const weekStart = getWeekStart(latestDate);
   const prevWeekStart = getOffsetDate(weekStart, -7);
@@ -244,8 +254,9 @@ function buildWeeklyReportData(db: ReturnType<typeof getDb>): string {
     const dramas = db.prepare(`
       SELECT d.title, MIN(rs.rank) as rank, MAX(rs.heat_value) as heat
       FROM ranking_snapshot rs INNER JOIN drama d ON rs.playlet_id = d.playlet_id
+      ${reviewJoin}
       WHERE rs.platform = ? AND rs.snapshot_date >= ? AND rs.snapshot_date <= ?
-        AND d.is_ai_drama IN ('ai_real', 'ai_manga')
+        AND ${isAiCol} IN ('ai_real', 'ai_manga')
       GROUP BY d.playlet_id ORDER BY rank ASC LIMIT 5
     `).all(p, start, end) as { title: string; rank: number; heat: number }[];
     return { platform: p, topDramas: dramas };
@@ -257,8 +268,9 @@ function buildWeeklyReportData(db: ReturnType<typeof getDb>): string {
   const newHits = db.prepare(`
     SELECT d.title, rs.platform, MAX(rs.heat_value) as heat
     FROM ranking_snapshot rs INNER JOIN drama d ON rs.playlet_id = d.playlet_id
+    ${reviewJoin}
     WHERE rs.snapshot_date >= ?
-      AND d.is_ai_drama IN ('ai_real', 'ai_manga')
+      AND ${isAiCol} IN ('ai_real', 'ai_manga')
       AND rs.playlet_id NOT IN (
         SELECT DISTINCT playlet_id FROM ranking_snapshot WHERE snapshot_date < ?
       )
@@ -268,7 +280,8 @@ function buildWeeklyReportData(db: ReturnType<typeof getDb>): string {
   const getTagCounts = (start: string, end: string) => {
     const rows = db.prepare(`
       SELECT d.tags FROM drama d INNER JOIN ranking_snapshot rs ON d.playlet_id = rs.playlet_id
-      WHERE rs.snapshot_date >= ? AND rs.snapshot_date <= ? AND d.is_ai_drama IN ('ai_real','ai_manga') AND d.tags != '[]'
+      ${reviewJoin}
+      WHERE rs.snapshot_date >= ? AND rs.snapshot_date <= ? AND ${isAiCol} IN ('ai_real','ai_manga') AND d.tags != '[]'
       GROUP BY d.playlet_id
     `).all(start, end) as { tags: string }[];
     const m = new Map<string, number>();
@@ -286,7 +299,8 @@ function buildWeeklyReportData(db: ReturnType<typeof getDb>): string {
   const getLangCounts = (start: string, end: string) => db.prepare(`
     SELECT d.language, COUNT(DISTINCT d.playlet_id) as cnt
     FROM drama d INNER JOIN ranking_snapshot rs ON d.playlet_id = rs.playlet_id
-    WHERE rs.snapshot_date >= ? AND rs.snapshot_date <= ? AND d.is_ai_drama IN ('ai_real','ai_manga') AND d.language IS NOT NULL
+    ${reviewJoin}
+    WHERE rs.snapshot_date >= ? AND rs.snapshot_date <= ? AND ${isAiCol} IN ('ai_real','ai_manga') AND d.language IS NOT NULL
     GROUP BY d.language
   `).all(start, end) as { language: string; cnt: number }[];
 

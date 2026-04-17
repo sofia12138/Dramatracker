@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { getDb } from '@/lib/db';
 import { getUserFromRequest } from '@/lib/api-auth';
 import { hasPermission } from '@/lib/auth';
+import { getSqliteOnlyParts } from '@/lib/db-compat';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -58,10 +59,11 @@ export async function POST(request: NextRequest) {
     const db = getDb();
     const dramaType = request.nextUrl.searchParams.get('type') || 'ai_real';
 
+    const { reviewJoin, isAiCol } = getSqliteOnlyParts();
     const TYPE_FILTER_MAP: Record<string, string> = {
-      ai_real: "AND d.is_ai_drama = 'ai_real'",
-      ai_manga: "AND d.is_ai_drama = 'ai_manga'",
-      real: "AND d.is_ai_drama = 'real'",
+      ai_real:  `AND ${isAiCol} = 'ai_real'`,
+      ai_manga: `AND ${isAiCol} = 'ai_manga'`,
+      real:     `AND ${isAiCol} = 'real'`,
     };
     const typeFilter = TYPE_FILTER_MAP[dramaType] || '';
 
@@ -87,6 +89,7 @@ export async function POST(request: NextRequest) {
         rs.invest_days, d.playlet_id
       FROM ranking_snapshot rs
       INNER JOIN drama d ON rs.playlet_id = d.playlet_id
+      ${reviewJoin}
       WHERE rs.snapshot_date = ? ${typeFilter}
       ORDER BY rs.heat_value DESC
       LIMIT 40
