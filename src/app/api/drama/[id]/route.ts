@@ -2,20 +2,40 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 import { getPendingReviewCounts } from '@/lib/review-count';
+import { isMysqlMode, execute, query } from '@/lib/mysql';
+
+// 属于 drama_review 表的人工审核字段，MySQL 模式下须分流，不能写入 drama 主表
+const REVIEW_FIELDS = new Set(['is_ai_drama', 'genre_tags_manual', 'genre_tags_ai', 'genre_source', 'review_status', 'review_notes']);
 
 export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
   const auth = checkPermission(request, 'manage_data');
   if (isErrorResponse(auth)) return auth;
 
   try {
-    const db = getDb();
     const body = await request.json();
-    const { title, description, language, cover_url, first_air_date, is_ai_drama, tags, creative_count } = body;
+    const { title, description, language, cover_url, first_air_date, tags, creative_count } = body;
 
+    if (isMysqlMode()) {
+      await execute(
+        `UPDATE drama SET title=?, description=?, language=?, cover_url=?, first_air_date=?,
+         tags=?, creative_count=?, updated_at=NOW()
+         WHERE id=?`,
+        [title, description ?? null, language ?? null, cover_url ?? null,
+         first_air_date ?? null, JSON.stringify(tags || []), creative_count ?? 0, params.id]
+      );
+      // is_ai_drama 在 MySQL 模式下不属于 drama 表，PUT 不处理审核字段
+      return NextResponse.json({ success: true });
+    }
+
+    // SQLite 模式（保留 is_ai_drama，兼容原有逻辑）
+    const { is_ai_drama } = body;
+    const db = getDb();
     db.prepare(
       `UPDATE drama SET title=?, description=?, language=?, cover_url=?, first_air_date=?, is_ai_drama=?, tags=?, creative_count=?, updated_at=datetime('now')
        WHERE id=?`
-    ).run(title, description || null, language || null, cover_url || null, first_air_date || null, is_ai_drama || null, JSON.stringify(tags || []), creative_count || 0, params.id);
+    ).run(title, description || null, language || null, cover_url || null,
+      first_air_date || null, is_ai_drama || null,
+      JSON.stringify(tags || []), creative_count || 0, params.id);
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
@@ -29,8 +49,80 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   if (isErrorResponse(auth)) return auth;
 
   try {
-    const db = getDb();
     const body = await request.json();
+
+    // ── MySQL 模式：按字段归属，分别写 drama / drama_review ─────────────────────
+    if (isMysqlMode()) {
+      const dramaFields: Record<string, unknown> = {};
+      const reviewFields: Record<string, unknown> = {};
+
+      for (const [key, value] of Object.entries(body)) {
+        if (REVIEW_FIELDS.has(key)) {
+          reviewFields[key] = value;
+        } else {
+          dramaFields[key] = value;
+        }
+      }
+
+      // 更新 drama 表（只包含抓取/基础字段）
+      if (Object.keys(dramaFields).length > 0) {
+        const sets: string[] = [];
+        const values: unknown[] = [];
+        for (const [k, v] of Object.entries(dramaFields)) {
+          if (k === 'tags') {
+            sets.push('tags = ?');
+            values.push(JSON.stringify(v));
+          } else {
+            sets.push(`${k} = ?`);
+            values.push(v);
+          }
+        }
+        sets.push('updated_at = NOW()');
+        values.push(params.id);
+        await execute(`UPDATE drama SET ${sets.join(', ')} WHERE id = ?`, values);
+      }
+
+      // 更新 drama_review 表（人工审核字段）
+      if (Object.keys(reviewFields).length > 0) {
+        const [dramaRow] = await query<{ id: number; playlet_id: string }>(
+          'SELECT id, playlet_id FROM drama WHERE id = ? LIMIT 1', [params.id]
+        );
+        if (!dramaRow) {
+          return NextResponse.json({ error: `未找到 id=${params.id} 的剧集` }, { status: 404 });
+        }
+
+        const sets: string[] = [];
+        const values: unknown[] = [];
+        for (const [k, v] of Object.entries(reviewFields)) {
+          if (k === 'genre_tags_manual' || k === 'genre_tags_ai') {
+            sets.push(`${k} = ?`);
+            values.push(v != null ? JSON.stringify(v) : null);
+          } else {
+            sets.push(`${k} = ?`);
+            values.push(v);
+          }
+        }
+        sets.push('updated_at = NOW()');
+        values.push(dramaRow.id);
+
+        // Upsert drama_review（保证存在）
+        await execute(
+          `INSERT INTO drama_review (drama_id, review_status) VALUES (?, 'pending')
+           ON DUPLICATE KEY UPDATE drama_id=drama_id`,
+          [dramaRow.id]
+        );
+        await execute(
+          `UPDATE drama_review SET ${sets.join(', ')} WHERE drama_id = ?`,
+          values
+        );
+      }
+
+      console.log(`[drama/mysql] PATCH id=${params.id} drama=${JSON.stringify(dramaFields)} review=${JSON.stringify(reviewFields)}`);
+      return NextResponse.json({ success: true, changes: 1, counts: {} });
+    }
+
+    // ── SQLite 模式（现有逻辑，保持不变）────────────────────────────────────────
+    const db = getDb();
     const fields: string[] = [];
     const values: unknown[] = [];
 
@@ -66,6 +158,12 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
   if (isErrorResponse(auth)) return auth;
 
   try {
+    if (isMysqlMode()) {
+      // drama_review 有外键 ON DELETE CASCADE，删除 drama 会自动清理
+      await execute('DELETE FROM drama WHERE id = ?', [params.id]);
+      return NextResponse.json({ success: true });
+    }
+
     const db = getDb();
     db.prepare('DELETE FROM drama WHERE id = ?').run(params.id);
     return NextResponse.json({ success: true });

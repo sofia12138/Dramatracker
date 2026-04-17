@@ -2,17 +2,56 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 import { getPendingReviewTotal, getPendingReviewCounts } from '@/lib/review-count';
+import { isMysqlMode, query, execute } from '@/lib/mysql';
+import { listPendingReview, batchClassifyDramas } from '@/lib/repositories/dramaRepository';
 
 export async function GET(request: NextRequest) {
   const auth = checkPermission(request, 'review_drama');
   if (isErrorResponse(auth)) return auth;
 
   try {
-    const db = getDb();
     const { searchParams } = new URL(request.url);
     const platform = searchParams.get('platform') || '';
     const page = parseInt(searchParams.get('page') || '1');
     const pageSize = parseInt(searchParams.get('pageSize') || '40');
+
+    // ── MySQL 模式：通过 Repository 层查询，is_ai_drama 来自 drama_review ─────────
+    if (isMysqlMode()) {
+      const result = await listPendingReview({ platform, page, pageSize });
+
+      // 统计待审核数量（MySQL 版）
+      const [countRow] = await query<{ total: number }>(
+        `SELECT COUNT(DISTINCT d.id) as total
+         FROM drama d
+         LEFT JOIN drama_review dr ON d.id = dr.drama_id
+         WHERE dr.id IS NULL OR dr.review_status = 'pending' OR dr.is_ai_drama IS NULL`
+      );
+      const platformCountRows = await query<{ platform: string; count: number }>(
+        `SELECT rs.platform, COUNT(DISTINCT d.id) as count
+         FROM ranking_snapshot rs
+         INNER JOIN drama d ON rs.playlet_id = d.playlet_id
+         LEFT JOIN drama_review dr ON d.id = dr.drama_id
+         WHERE (dr.id IS NULL OR dr.review_status = 'pending' OR dr.is_ai_drama IS NULL)
+         GROUP BY rs.platform
+         ORDER BY count DESC`
+      );
+      const pendingCounts = {
+        total: countRow?.total ?? 0,
+        platformCounts: platformCountRows,
+      };
+
+      console.log(`[review/mysql] GET total=${result.total} platform=${platform || '全部'}`);
+      return NextResponse.json({
+        data: result.data,
+        total: result.total,
+        page,
+        pageSize,
+        pendingCounts,
+      });
+    }
+
+    // ── SQLite 模式（现有逻辑，保持不变）────────────────────────────────────────
+    const db = getDb();
     const offset = (page - 1) * pageSize;
 
     if (platform) {
@@ -81,7 +120,6 @@ export async function POST(request: NextRequest) {
   if (isErrorResponse(auth)) return auth;
 
   try {
-    const db = getDb();
     const body = await request.json();
     const { ids, is_ai_drama } = body as { ids: number[]; is_ai_drama: string };
 
@@ -89,6 +127,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'ids and is_ai_drama required' }, { status: 400 });
     }
 
+    // ── MySQL 模式：写 drama_review 表，不碰 drama.is_ai_drama ─────────────────
+    if (isMysqlMode()) {
+      const updated = await batchClassifyDramas(ids, is_ai_drama);
+
+      // MySQL 版待审核统计
+      const [countRow] = await query<{ total: number }>(
+        `SELECT COUNT(DISTINCT d.id) as total
+         FROM drama d
+         LEFT JOIN drama_review dr ON d.id = dr.drama_id
+         WHERE dr.id IS NULL OR dr.review_status = 'pending' OR dr.is_ai_drama IS NULL`
+      );
+      const platformCountRows = await query<{ platform: string; count: number }>(
+        `SELECT rs.platform, COUNT(DISTINCT d.id) as count
+         FROM ranking_snapshot rs
+         INNER JOIN drama d ON rs.playlet_id = d.playlet_id
+         LEFT JOIN drama_review dr ON d.id = dr.drama_id
+         WHERE (dr.id IS NULL OR dr.review_status = 'pending' OR dr.is_ai_drama IS NULL)
+         GROUP BY rs.platform ORDER BY count DESC`
+      );
+
+      console.log(`[review/mysql] batch classify ids=[${ids}] as ${is_ai_drama} updated=${updated}`);
+      return NextResponse.json({
+        success: true,
+        updated,
+        counts: { total: countRow?.total ?? 0, platformCounts: platformCountRows },
+      });
+    }
+
+    // ── SQLite 模式（现有逻辑）────────────────────────────────────────────────
+    const db = getDb();
     const placeholders = ids.map(() => '?').join(',');
     const result = db.prepare(
       `UPDATE drama SET is_ai_drama = ?, updated_at = datetime('now') WHERE id IN (${placeholders})`
@@ -97,7 +165,6 @@ export async function POST(request: NextRequest) {
     console.log(`[review] batch classify ids=[${ids}] as ${is_ai_drama} changes=${result.changes}`);
 
     const counts = getPendingReviewCounts();
-
     return NextResponse.json({ success: true, updated: result.changes, counts });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
