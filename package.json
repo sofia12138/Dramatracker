@@ -18,6 +18,7 @@
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",
     "jose": "^6.2.2",
+    "mysql2": "^3.22.1",
     "next": "14.2.35",
     "node-cron": "^4.2.1",
     "openai": "^6.32.0",

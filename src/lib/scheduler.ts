@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { lockDbForScraper, unlockDbAfterScraper } from './db';
+import { getDb, lockDbForScraper, unlockDbAfterScraper } from './db';
 import { exportDailyDb } from './export-daily';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
@@ -54,6 +54,42 @@ function updateConfigField(field: string, value: string) {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2), 'utf-8');
   } catch (e) {
     console.error(`[auto-scrape] 写入配置失败: ${e}`);
+  }
+}
+
+/** Node 进程在子进程结束前退出时，config 会卡在 running；启动时根据库内快照日尝试恢复 */
+function recoverStuckRunningStatus() {
+  try {
+    if (!fs.existsSync(CONFIG_PATH)) return;
+    const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) as Record<string, unknown>;
+    if (raw.last_auto_fetch_status !== 'running') return;
+
+    const lastAtStr = typeof raw.last_auto_fetch_at === 'string' ? raw.last_auto_fetch_at : '';
+    const lastAtMs = lastAtStr ? new Date(lastAtStr).getTime() : 0;
+    if (lastAtMs && !Number.isNaN(lastAtMs) && Date.now() - lastAtMs < 5 * 60 * 1000) {
+      return;
+    }
+
+    const db = getDb();
+    const row = db.prepare('SELECT MAX(snapshot_date) AS m FROM ranking_snapshot').get() as { m: string | null };
+    const maxSnap = row?.m;
+    const fetchDay = lastAtStr.slice(0, 10);
+
+    if (maxSnap && fetchDay && maxSnap >= fetchDay) {
+      raw.last_auto_fetch_status = 'success';
+      raw.last_auto_fetch_success_at = new Date().toISOString();
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2), 'utf-8');
+      console.log('[auto-scrape] 已将卡住的 running 恢复为 success（快照日期已覆盖抓取当日）');
+      return;
+    }
+
+    if (!lastAtMs || Number.isNaN(lastAtMs) || Date.now() - lastAtMs > 60 * 60 * 1000) {
+      raw.last_auto_fetch_status = 'failed';
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(raw, null, 2), 'utf-8');
+      console.log('[auto-scrape] 已将超时未收尾的 running 标记为 failed');
+    }
+  } catch (e) {
+    console.error('[auto-scrape] 恢复抓取状态失败:', e);
   }
 }
 
@@ -110,6 +146,8 @@ function runScraper() {
 export function startScheduler() {
   if (started) return;
   started = true;
+
+  recoverStuckRunningStatus();
 
   cron.schedule('* * * * *', () => {
     const config = readConfig();
