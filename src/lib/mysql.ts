@@ -61,7 +61,7 @@ export async function query<T = Record<string, unknown>>(
   params?: unknown[]
 ): Promise<T[]> {
   const pool = getMysqlPool();
-  const [rows] = await pool.execute(sql, params);
+  const [rows] = await pool.execute(sql, params as never);
   return rows as T[];
 }
 
@@ -71,7 +71,7 @@ export async function execute(
   params?: unknown[]
 ): Promise<mysql.ResultSetHeader> {
   const pool = getMysqlPool();
-  const [result] = await pool.execute(sql, params);
+  const [result] = await pool.execute(sql, params as never);
   return result as mysql.ResultSetHeader;
 }
 
