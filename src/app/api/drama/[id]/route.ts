@@ -118,7 +118,8 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       }
 
       console.log(`[drama/mysql] PATCH id=${params.id} drama=${JSON.stringify(dramaFields)} review=${JSON.stringify(reviewFields)}`);
-      return NextResponse.json({ success: true, changes: 1, counts: {} });
+      const counts = await getPendingReviewCounts();
+      return NextResponse.json({ success: true, changes: 1, counts });
     }
 
     // ── SQLite 模式（现有逻辑，保持不变）────────────────────────────────────────

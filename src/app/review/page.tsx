@@ -146,11 +146,13 @@ export default function ReviewPage() {
       .catch(() => {});
   }, []);
 
-  const applyCounts = useCallback((counts: { total: number; platformCounts: PlatformCount[] }) => {
-    setOverallTotal(counts.total);
-    setPlatformCounts(counts.platformCounts);
+  const applyCounts = useCallback((counts: { total?: number; platformCounts?: PlatformCount[] } | null | undefined) => {
+    if (!counts) return;
+    const total = counts.total ?? 0;
+    setOverallTotal(total);
+    setPlatformCounts(Array.isArray(counts.platformCounts) ? counts.platformCounts : []);
     if (!selectedPlatformRef.current) {
-      setTotal(counts.total);
+      setTotal(total);
     }
   }, []);
 
@@ -361,6 +363,7 @@ export default function ReviewPage() {
   };
 
   const getPlatformCount = (platform: string) => {
+    if (!Array.isArray(platformCounts)) return 0;
     return platformCounts.find(p => p.platform === platform)?.count || 0;
   };
 
