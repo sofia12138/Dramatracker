@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 import { getPendingReviewTotal, getPendingReviewCounts } from '@/lib/review-count';
-import { isMysqlMode, query, execute } from '@/lib/mysql';
+import { isMysqlMode, query } from '@/lib/mysql';
 import { listPendingReview, batchClassifyDramas } from '@/lib/repositories/dramaRepository';
 
 export async function GET(request: NextRequest) {
