@@ -55,6 +55,9 @@ export async function GET(request: NextRequest) {
     // drama_review JOIN 只在 MySQL 连接上有效，此处绝对不注入。
     const reviewJoin = '';
     const isAiCol = 'd.is_ai_drama';
+    // 显式 false：辅助函数 (getPreviousPeriodRanks / getHeatValuesOnDate / ...)
+    // 形参里有 isMySQL 默认值，但调用点引用了未声明的同名变量会让 build 失败。
+    const isMySQL = false;
 
     const { searchParams } = new URL(request.url);
     const platform = searchParams.get('platform') || '';
