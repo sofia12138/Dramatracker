@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
       const placeholders = playletIds.map(() => '?').join(',');
       const [dramaRows] = await pool.execute(
         `SELECT id, playlet_id FROM drama WHERE playlet_id IN (${placeholders})`, playletIds
-      ) as unknown as [{ id: number; playlet_id: string }[][]];
+      ) as unknown as [Array<{ id: number; playlet_id: string }>, unknown];
       const idMap = new Map(dramaRows.map(r => [r.playlet_id, r.id]));
 
       await withTransaction(async (conn) => {
