@@ -8,6 +8,7 @@ import {
   queryTagsByAiType,
   queryHeatGrowthTop5,
 } from '@/lib/db-compat';
+import { parseJsonField } from '@/lib/json-field';
 
 export async function GET(request: NextRequest) {
   try {
@@ -95,11 +96,9 @@ export async function GET(request: NextRequest) {
 
       const m = new Map<string, number>();
       for (const row of rows) {
-        try {
-          for (const t of JSON.parse(row.tags) as string[]) {
-            if (t) m.set(t, (m.get(t) || 0) + 1);
-          }
-        } catch { /* skip */ }
+        for (const t of parseJsonField<string[]>(row.tags, [])) {
+          if (t) m.set(t, (m.get(t) || 0) + 1);
+        }
       }
       return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([tag, count]) => ({ tag, count }));
     };

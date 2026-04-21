@@ -4,6 +4,7 @@ import { getDb } from '@/lib/db';
 import { getUserFromRequest } from '@/lib/api-auth';
 import { hasPermission } from '@/lib/auth';
 import { getSqliteOnlyParts } from '@/lib/db-compat';
+import { parseJsonField } from '@/lib/json-field';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -156,8 +157,7 @@ export async function POST(request: NextRequest) {
         rankChange = `↑${prevRank - row.rank}`;
       }
 
-      let tags: string[] = [];
-      try { tags = JSON.parse(row.tags || '[]'); } catch { /* ignore */ }
+      const tags = parseJsonField<string[]>(row.tags, []);
 
       compactDramas.push({
         title: row.title,

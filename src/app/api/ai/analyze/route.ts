@@ -10,6 +10,7 @@ import {
   type AnalysisType,
 } from '@/lib/ai';
 import { getSqliteOnlyParts } from '@/lib/db-compat';
+import { parseJsonField } from '@/lib/json-field';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -169,7 +170,9 @@ function buildInsightData(db: ReturnType<typeof getDb>): string {
 
   const tagMap = new Map<string, number>();
   for (const r of tagRows) {
-    try { for (const t of JSON.parse(r.tags) as string[]) { if (t) tagMap.set(t, (tagMap.get(t) || 0) + 1); } } catch {}
+    for (const t of parseJsonField<string[]>(r.tags, [])) {
+      if (t) tagMap.set(t, (tagMap.get(t) || 0) + 1);
+    }
   }
   const tagDistribution = Array.from(tagMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([tag, count]) => ({ tag, count }));
 
@@ -199,8 +202,7 @@ function buildDramaReviewData(db: ReturnType<typeof getDb>, playletId: string): 
     FROM ranking_snapshot WHERE playlet_id = ?
   `).get(playletId) as { heat: number; days: number };
 
-  let tags: string[] = [];
-  try { tags = JSON.parse(drama.tags || '[]'); } catch {}
+  const tags = parseJsonField<string[]>(drama.tags, []);
 
   return buildDramaReviewPrompt({
     title: drama.title,
@@ -235,8 +237,7 @@ function buildHotAnalysisData(db: ReturnType<typeof getDb>): string {
 
   return buildHotAnalysisPrompt({
     topDramas: rows.map(r => {
-      let tags: string[] = [];
-      try { tags = JSON.parse(r.tags || '[]'); } catch {}
+      const tags = parseJsonField<string[]>(r.tags, []);
       return { title: r.title, tags, language: r.language || 'Unknown', investDays: r.investDays, heatIncrement: r.heatIncrement };
     }),
   });
@@ -285,7 +286,11 @@ function buildWeeklyReportData(db: ReturnType<typeof getDb>): string {
       GROUP BY d.playlet_id
     `).all(start, end) as { tags: string }[];
     const m = new Map<string, number>();
-    for (const r of rows) { try { for (const t of JSON.parse(r.tags) as string[]) { if (t) m.set(t, (m.get(t) || 0) + 1); } } catch {} }
+    for (const r of rows) {
+      for (const t of parseJsonField<string[]>(r.tags, [])) {
+        if (t) m.set(t, (m.get(t) || 0) + 1);
+      }
+    }
     return m;
   };
 

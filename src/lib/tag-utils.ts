@@ -208,12 +208,28 @@ export function countCustomTagsFromRows(rows: { genre_tags_manual: string | null
 // ---- Compat functions for consumers that display tags as flat arrays ----
 
 /**
- * Parse any raw tag string (genre_tags_manual/ai/scraped) into flat array.
+ * Parse any raw tag value (genre_tags_manual/ai/scraped) into flat array.
+ *
+ * 入参做成 unknown 是因为不同数据源返回类型不同：
+ *   - SQLite (better-sqlite3) 把 TEXT 列读成 string
+ *   - MySQL (mysql2) 对 JSON 列会自动 JSON.parse，直接返回 array/object
+ * 所以这里需要同时容忍 string / array / object / null / undefined。
  */
-export function parseTagsCompat(raw: string | null | undefined): string[] {
-  if (!raw) return [];
-  const trimmed = raw.trim();
+export function parseTagsCompat(raw: unknown): string[] {
+  if (raw == null) return [];
+
+  if (Array.isArray(raw)) {
+    return raw.filter((v): v is string => typeof v === 'string');
+  }
+
+  if (typeof raw === 'object') {
+    return flattenManualTags(parseManualTags(raw));
+  }
+
+  const str = typeof raw === 'string' ? raw : String(raw);
+  const trimmed = str.trim();
   if (!trimmed) return [];
+
   try {
     const parsed = JSON.parse(trimmed);
     if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === 'string');
@@ -227,9 +243,9 @@ export function parseTagsCompat(raw: string | null | undefined): string[] {
 }
 
 export function getFinalTagsCompat(
-  manualRaw: string | null | undefined,
-  aiRaw: string | null | undefined,
-  scrapedRaw: string | null | undefined,
+  manualRaw: unknown,
+  aiRaw: unknown,
+  scrapedRaw: unknown,
 ): string[] {
   const manual = parseTagsCompat(manualRaw);
   if (manual.length > 0) return manual;
@@ -239,9 +255,9 @@ export function getFinalTagsCompat(
 }
 
 export function getTagSourceCompat(
-  manualRaw: string | null | undefined,
-  aiRaw: string | null | undefined,
-  scrapedRaw: string | null | undefined,
+  manualRaw: unknown,
+  aiRaw: unknown,
+  scrapedRaw: unknown,
 ): 'manual' | 'ai' | 'scraped' | 'none' {
   if (parseTagsCompat(manualRaw).length > 0) return 'manual';
   if (parseTagsCompat(aiRaw).length > 0) return 'ai';
