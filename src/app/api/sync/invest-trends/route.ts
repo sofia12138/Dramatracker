@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     } catch { /* ignore */ }
 
     try {
-      const playletIds = [...new Set(trends.map(t => t.playlet_id))];
+      const playletIds = Array.from(new Set(trends.map(t => t.playlet_id)));
       const placeholders = playletIds.map(() => '?').join(',');
       const [dramaRows] = await pool.execute(
         `SELECT id, playlet_id FROM drama WHERE playlet_id IN (${placeholders})`, playletIds

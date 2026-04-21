@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
 
     try {
       // 批量查 playlet_id -> drama_id 映射（减少逐条查询）
-      const playletIds = [...new Set(rankings.map(r => r.playlet_id))];
+      const playletIds = Array.from(new Set(rankings.map(r => r.playlet_id)));
       const placeholders = playletIds.map(() => '?').join(',');
       const [dramaRowsRaw] = await pool.execute(
         `SELECT id, playlet_id FROM drama WHERE playlet_id IN (${placeholders})`,
