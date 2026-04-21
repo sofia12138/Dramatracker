@@ -63,6 +63,11 @@ export async function listDramas(opts: {
       WHERE ${where}
     `;
 
+    // mysql2 prepared-statement 对 LIMIT/OFFSET 数字占位符不兼容，
+    // 这里用 Math.floor 做安全转换后内联到 SQL（避免 ER_WRONG_ARGUMENTS）
+    const safeLimit = Math.max(1, Math.floor(pageSize));
+    const safeOffset = Math.max(0, Math.floor(offset));
+
     const [countRow] = await query<{ total: number }>(
       `SELECT COUNT(*) as total ${baseSql}`, params
     );
@@ -70,8 +75,8 @@ export async function listDramas(opts: {
       `SELECT d.*, dr.is_ai_drama, dr.genre_tags_manual, dr.genre_tags_ai,
               dr.genre_source, dr.review_status
        ${baseSql}
-       ORDER BY d.updated_at DESC LIMIT ? OFFSET ?`,
-      [...params, pageSize, offset]
+       ORDER BY d.updated_at DESC LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+      params
     );
 
     return { data, total: countRow?.total ?? 0 };
@@ -161,8 +166,12 @@ export async function listPendingReview(opts: {
       LIMIT ? OFFSET ?
     `;
 
+    const safeLimit = Math.max(1, Math.floor(pageSize));
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const dataSqlInline = dataSql.replace('LIMIT ? OFFSET ?', `LIMIT ${safeLimit} OFFSET ${safeOffset}`);
+
     const [countRow] = await query<{ total: number }>(countSql, params);
-    const data = await query<DramaRow>(dataSql, [...params, pageSize, offset]);
+    const data = await query<DramaRow>(dataSqlInline, params);
     return { data, total: countRow?.total ?? 0 };
   }
 

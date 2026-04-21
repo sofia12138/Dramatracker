@@ -25,6 +25,13 @@ try:
 except ImportError:
     detect = None
 
+# B3-c 双写：本地 SQLite + 线上 sync API（失败入队，下次启动重试）
+try:
+    from . import sync_buffer  # type: ignore
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import sync_buffer  # type: ignore
+
 # ---------------------------------------------------------------------------
 # sign 盐值（从 DataEye 前端 JS 逆向获得）
 # ---------------------------------------------------------------------------
@@ -381,6 +388,9 @@ def upsert_drama(conn: sqlite3.Connection, info: dict, language: str):
         stats["new_drama"] += 1
         debug(f"  -> INSERT 新剧集")
 
+    # B3-c 同步：append 到线上 sync buffer（不影响本地写入）
+    sync_buffer.add_drama(info, language)
+
 
 def upsert_ranking(conn: sqlite3.Connection, playlet_id: str, platform: str,
                     rank: int, heat_value: float, material_count: int,
@@ -403,6 +413,10 @@ def upsert_ranking(conn: sqlite3.Connection, playlet_id: str, platform: str,
             (playlet_id, platform, rank, heat_value, material_count, invest_days, snapshot_date),
         )
 
+    # B3-c 同步：写完 SQLite 后 append 到线上 sync buffer
+    sync_buffer.add_ranking(platform, snapshot_date, playlet_id,
+                             rank, heat_value, material_count, invest_days)
+
 
 def insert_trend(conn: sqlite3.Connection, playlet_id: str, platform: str,
                  date: str, daily_count: int):
@@ -416,6 +430,9 @@ def insert_trend(conn: sqlite3.Connection, playlet_id: str, platform: str,
             "VALUES (?,?,?,?)",
             (playlet_id, platform, date, daily_count),
         )
+
+    # B3-c 同步（即使本地 skipped 也尝试同步线上，由线上 ON DUPLICATE 决定）
+    sync_buffer.add_trend(platform, playlet_id, date, daily_count)
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +531,8 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
                     )
                     stats["new_drama"] += 1
                     debug(f"  -> INSERT 最小记录: {title}")
+                    # B3-c 同步：最小化插入也同步到线上
+                    sync_buffer.add_minimal_drama(playlet_id, title)
 
             # 写入排名快照
             debug(f"[DB] upsert_ranking: {playlet_id} @ {platform_name}, rank={ranking}")
@@ -533,6 +552,14 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
 
     debug(f"{platform_name} commit 数据库")
     conn.commit()
+
+    # B3-c 双写：本地 commit 之后，把本平台 buffer 一次性 flush 到线上
+    try:
+        sync_buffer.flush(label=platform_name)
+    except Exception as e:
+        log(f"  ⚠️  {platform_name} sync flush 异常（不影响本地）：{e}")
+        log_error(f"sync flush {platform_name}: {traceback.format_exc()}")
+
     log(f"  🏁 {platform_name} 完成")
 
 
@@ -597,6 +624,17 @@ def run(backfill_days: int = 0):
     headers = build_headers(cookie)
     conn = get_db()
 
+    # B3-c 双写：开抓前先重试历史失败队列
+    if sync_buffer.is_enabled():
+        log("📤 B3-c 双写已启用 → 同步目标: " + sync_buffer.SERVER_URL)
+        try:
+            sync_buffer.retry_failed_queue()
+        except Exception as e:
+            log(f"⚠️  失败队列重试异常（不影响主抓取）：{e}")
+            log_error(f"retry_failed_queue: {traceback.format_exc()}")
+    else:
+        log("ℹ️  未配置 DT_SYNC_TOKEN，仅本地 SQLite 写入（不同步线上）")
+
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     # 无论是否 backfill，ranking 只抓今天（接口只返回当前排名）
@@ -620,6 +658,12 @@ def run(backfill_days: int = 0):
         log(f"📅 历史补抓模式: 补抓趋势数据")
         log(f"{'─' * 40}")
         backfill_trends(cookie, headers, conn)
+        # B3-c：backfill 末尾 flush（trend 数据可能未走平台 flush）
+        try:
+            sync_buffer.flush(label="backfill")
+        except Exception as e:
+            log(f"⚠️  backfill sync flush 异常：{e}")
+            log_error(f"sync flush backfill: {traceback.format_exc()}")
 
     debug("关闭数据库连接")
     conn.close()
@@ -633,6 +677,11 @@ def run(backfill_days: int = 0):
     log(f"  🆕 新增剧集: {stats['new_drama']} 部")
     log(f"  🔄 更新剧集: {stats['updated']} 部")
     log(f"{'=' * 60}")
+
+    # B3-c 双写：打印同步汇总
+    if sync_buffer.is_enabled():
+        sync_buffer.report()
+
     debug("脚本执行结束")
 
 

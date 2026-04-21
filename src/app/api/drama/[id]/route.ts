@@ -145,7 +145,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     if (result.changes === 0) {
       return NextResponse.json({ error: `未找到 id=${params.id} 的剧集，未做任何修改` }, { status: 404 });
     }
-    const counts = getPendingReviewCounts();
+    const counts = await getPendingReviewCounts();
     return NextResponse.json({ success: true, changes: result.changes, counts });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

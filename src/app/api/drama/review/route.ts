@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ data, total: countResult.total, page, pageSize });
     }
 
-    const total = getPendingReviewTotal();
+    const total = await getPendingReviewTotal();
 
     const dataSql = `
       SELECT d.id, d.playlet_id, d.title, d.description, d.language,
@@ -164,7 +164,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`[review] batch classify ids=[${ids}] as ${is_ai_drama} changes=${result.changes}`);
 
-    const counts = getPendingReviewCounts();
+    const counts = await getPendingReviewCounts();
     return NextResponse.json({ success: true, updated: result.changes, counts });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

@@ -1,17 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
+import { listDramas } from '@/lib/repositories/dramaRepository';
+import { isMysqlMode } from '@/lib/mysql';
 
 export async function GET(request: NextRequest) {
   try {
-    const db = getDb();
     const { searchParams } = new URL(request.url);
-    const isAiDrama = searchParams.get('is_ai_drama');
+    const isAiDrama = searchParams.get('is_ai_drama') ?? undefined;
     const search = searchParams.get('search') || '';
     const page = parseInt(searchParams.get('page') || '1');
     const pageSize = parseInt(searchParams.get('pageSize') || '20');
-    const offset = (page - 1) * pageSize;
 
+    if (isMysqlMode()) {
+      const { data, total } = await listDramas({ isAiDrama, search, page, pageSize });
+      return NextResponse.json({ data, total, page, pageSize });
+    }
+
+    const db = getDb();
+    const offset = (page - 1) * pageSize;
     let whereClause = '1=1';
     const params: unknown[] = [];
 
@@ -30,12 +37,7 @@ export async function GET(request: NextRequest) {
     const countResult = db.prepare(`SELECT COUNT(*) as total FROM drama WHERE ${whereClause}`).get(...params) as { total: number };
     const dramas = db.prepare(`SELECT * FROM drama WHERE ${whereClause} ORDER BY updated_at DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset);
 
-    return NextResponse.json({
-      data: dramas,
-      total: countResult.total,
-      page,
-      pageSize,
-    });
+    return NextResponse.json({ data: dramas, total: countResult.total, page, pageSize });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });
