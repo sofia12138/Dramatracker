@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { isMysqlMode, query } from '@/lib/mysql';
 
 export async function GET(request: NextRequest) {
   try {
-    const db = getDb();
     const { searchParams } = new URL(request.url);
     const playletId = searchParams.get('playlet_id');
     const platform = searchParams.get('platform');
@@ -18,6 +18,21 @@ export async function GET(request: NextRequest) {
     if (startDate) { whereClause += ' AND date >= ?'; params.push(startDate); }
     if (endDate) { whereClause += ' AND date <= ?'; params.push(endDate); }
 
+    if (isMysqlMode()) {
+      // MySQL 的 invest_trend.date 是 DATE 类型；统一格式化为 'YYYY-MM-DD' 字符串
+      const sql = `
+        SELECT id, drama_id, playlet_id, platform,
+               DATE_FORMAT(date, '%Y-%m-%d') AS date,
+               daily_invest_count
+        FROM invest_trend
+        WHERE ${whereClause}
+        ORDER BY date ASC
+      `;
+      const rows = await query(sql, params);
+      return NextResponse.json(rows);
+    }
+
+    const db = getDb();
     const data = db.prepare(`SELECT * FROM invest_trend WHERE ${whereClause} ORDER BY date ASC`).all(...params);
     return NextResponse.json(data);
   } catch (error: unknown) {
