@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { isMysqlMode, query } from '@/lib/mysql';
+import { stringifyJsonField } from '@/lib/json-field';
+
+// MySQL 把 JSON 列自动 parse 成 array/object，前端仍按字符串解析会失败。
+// 在 detail 出口把 drama 上的 JSON 列归一化为字符串，与 SQLite 模式对齐。
+const DRAMA_JSON_COLS = ['tags', 'genre_tags_manual', 'genre_tags_ai'] as const;
+function normalizeDramaJsonFields(drama: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!drama) return drama;
+  for (const k of DRAMA_JSON_COLS) {
+    if (k in drama) drama[k] = stringifyJsonField(drama[k]);
+  }
+  return drama;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,7 +33,7 @@ export async function GET(request: NextRequest) {
          WHERE d.playlet_id = ? LIMIT 1`,
         [playletId]
       );
-      const drama = dramaRows[0] ?? null;
+      const drama = normalizeDramaJsonFields(dramaRows[0] ?? null);
 
       // 历史排名（最近 200 条）
       const rankings = await query(

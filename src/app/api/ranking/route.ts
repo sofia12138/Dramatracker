@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { isMysqlMode, query } from '@/lib/mysql';
+import { stringifyJsonField } from '@/lib/json-field';
+
+/**
+ * mysql2 把 JSON 列自动 parse 成 array/object 后透传给前端时，
+ * 前端 RankingTable 对 tags 仍走 JSON.parse(string)，会全部失败导致标签消失。
+ * 在 API 出口把 tags 归一化为 JSON 字符串，保持与 SQLite 模式相同的契约。
+ */
+function normalizeRankingRows<T extends { tags: string | null }>(rows: T[]): T[] {
+  for (const r of rows) {
+    // 运行时 mysql2 可能把 JSON 列读成数组/对象，绕过 TS 类型做归一化
+    (r as { tags: string | null }).tags = stringifyJsonField((r as { tags: unknown }).tags);
+  }
+  return rows;
+}
 
 /**
  * 方言信息：根据 isMysqlMode() 在两套 schema 之间切换。
@@ -201,7 +215,7 @@ export async function GET(request: NextRequest) {
         ORDER BY \`rank\` ASC
         LIMIT ${safeLimit}
       `;
-      const data = await exec<RankingRow>(sql, params);
+      const data = normalizeRankingRows(await exec<RankingRow>(sql, params));
 
       // Drama-level dedup: merge iOS/Android records (different playlet_id, same drama)
       const dedupMap = new Map<string, RankingRow>();
@@ -281,7 +295,7 @@ export async function GET(request: NextRequest) {
       `;
       const newSqlParams: unknown[] = [latestDate];
       if (isAiDrama) newSqlParams.push(isAiDrama);
-      const allLatest = await exec<RankingRow>(newSql, newSqlParams);
+      const allLatest = normalizeRankingRows(await exec<RankingRow>(newSql, newSqlParams));
 
       // first_seen_date：首次进入系统的日期（MIN snapshot_date / date_key）
       const firstSeenMap = await getFirstAppearances(dia);
@@ -484,7 +498,7 @@ export async function GET(request: NextRequest) {
       WHERE ${whereClause}
       ORDER BY rs.heat_value DESC
     `;
-    const rawData = await exec<RankingRow>(sql, params);
+    const rawData = normalizeRankingRows(await exec<RankingRow>(sql, params));
 
     let filteredData = rawData;
     if (minAppearances > 0) {
