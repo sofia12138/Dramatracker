@@ -51,6 +51,13 @@ data/exports/
 data/tmp/
 data - 副本/
 
+# 仓库根下的一次性数据迁移 / 调试脚本（_ 前缀），不纳入版本管理
+/_*.js
+/_*.py
+
+# prisma：项目实际使用 SQLite / MySQL，未启用 Prisma
+/prisma/
+
 # logs
 logs/
 
