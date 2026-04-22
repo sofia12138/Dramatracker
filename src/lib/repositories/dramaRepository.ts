@@ -5,6 +5,28 @@
  */
 import { isMysqlMode, query, execute } from '../mysql';
 import { getDb } from '../db';
+import { stringifyJsonField } from '../json-field';
+
+// MySQL 把 JSON 列自动 parse 成 array/object，但前端历史代码按字符串解析。
+// 在 Repository 层把 drama 行的所有 JSON 列归一化成字符串，与 SQLite 行为对齐。
+const DRAMA_JSON_COLS: ReadonlyArray<keyof DramaRow> = [
+  'tags', 'genre_tags_manual', 'genre_tags_ai',
+] as const;
+
+function normalizeDramaRow<T extends Partial<DramaRow>>(row: T | null | undefined): T | null {
+  if (!row) return null;
+  for (const k of DRAMA_JSON_COLS) {
+    if (k in row) {
+      (row as Record<string, unknown>)[k] = stringifyJsonField((row as Record<string, unknown>)[k]);
+    }
+  }
+  return row;
+}
+
+function normalizeDramaRows<T extends Partial<DramaRow>>(rows: T[]): T[] {
+  for (const r of rows) normalizeDramaRow(r);
+  return rows;
+}
 
 export interface DramaRow {
   id: number;
@@ -79,7 +101,7 @@ export async function listDramas(opts: {
       params
     );
 
-    return { data, total: countRow?.total ?? 0 };
+    return { data: normalizeDramaRows(data), total: countRow?.total ?? 0 };
   }
 
   // SQLite 兜底
@@ -117,7 +139,7 @@ export async function getDramaByPlayletId(playletId: string): Promise<DramaRow |
        WHERE d.playlet_id = ? LIMIT 1`,
       [playletId]
     );
-    return rows[0] ?? null;
+    return normalizeDramaRow(rows[0] ?? null);
   }
 
   const db = getDb();
@@ -172,7 +194,7 @@ export async function listPendingReview(opts: {
 
     const [countRow] = await query<{ total: number }>(countSql, params);
     const data = await query<DramaRow>(dataSqlInline, params);
-    return { data, total: countRow?.total ?? 0 };
+    return { data: normalizeDramaRows(data), total: countRow?.total ?? 0 };
   }
 
   // SQLite 兜底（原有逻辑）
