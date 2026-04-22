@@ -1,5 +1,57 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { isMysqlMode, query } from '@/lib/mysql';
+
+/**
+ * 方言信息：根据 isMysqlMode() 在两套 schema 之间切换。
+ * - SQLite: ranking_snapshot 用 snapshot_date / rank, drama 表自带 is_ai_drama 等
+ * - MySQL : ranking_snapshot 用 date_key / rank_position, 人审字段在 drama_review
+ *           （好在 MySQL 的 ranking_snapshot 也有 playlet_id 业务键，可继续用 playlet_id 作 join key）
+ */
+interface Dialect {
+  isMySQL: boolean;
+  dateCol: string;          // rs.snapshot_date / rs.date_key
+  rankCol: string;          // rs.rank / rs.rank_position
+  reviewJoin: string;       // '' / LEFT JOIN drama_review dr ON dr.drama_id = rs.drama_id
+  isAiCol: string;          // d.is_ai_drama / dr.is_ai_drama
+  tagsExpr: string;         // COALESCE(...)
+  dateMinusDays: (n: number) => string;
+  /** 在 MySQL ONLY_FULL_GROUP_BY 下包裹非聚合列；SQLite 透传 */
+  anyValue: (expr: string) => string;
+  /** 执行 SELECT 并返回行 */
+  exec: <T = Record<string, unknown>>(sql: string, params: unknown[]) => Promise<T[]>;
+}
+
+function makeDialect(): Dialect {
+  if (isMysqlMode()) {
+    return {
+      isMySQL: true,
+      dateCol: 'rs.date_key',
+      rankCol: 'rs.rank_position',
+      // ranking_snapshot 已带 drama_id；直接关 drama_review，省一次 JOIN drama
+      reviewJoin: 'LEFT JOIN drama_review dr ON dr.drama_id = rs.drama_id',
+      isAiCol: 'dr.is_ai_drama',
+      tagsExpr: 'COALESCE(dr.genre_tags_manual, dr.genre_tags_ai, d.tags)',
+      dateMinusDays: (n: number) => `DATE_SUB(?, INTERVAL ${n} DAY)`,
+      anyValue: (expr: string) => `ANY_VALUE(${expr})`,
+      exec: async <T,>(sql: string, params: unknown[]) => (await query<T>(sql, params)) as T[],
+    };
+  }
+  return {
+    isMySQL: false,
+    dateCol: 'rs.snapshot_date',
+    rankCol: 'rs.rank',
+    reviewJoin: '',
+    isAiCol: 'd.is_ai_drama',
+    tagsExpr: 'COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags)',
+    dateMinusDays: (n: number) => `date(?, '-${n} day${n > 1 ? 's' : ''}')`,
+    anyValue: (expr: string) => expr,
+    exec: async <T,>(sql: string, params: unknown[]) => {
+      const db = getDb();
+      return db.prepare(sql).all(...params) as T[];
+    },
+  };
+}
 
 interface RankingRow {
   playlet_id: string;
@@ -47,17 +99,10 @@ function getDramaDedupeKey(title: unknown, language: unknown, firstAirDate: unkn
 
 export async function GET(request: NextRequest) {
   try {
-    const db = getDb();
-
-    // ranking 路由始终读 SQLite（getDb()），无论是否启用 MySQL 模式。
-    // MySQL 模式下新增的抓取数据通过 sync API 写入 MySQL，
-    // 但排行榜读取路径在第一阶段灰度切换中保持 SQLite 不变。
-    // drama_review JOIN 只在 MySQL 连接上有效，此处绝对不注入。
-    const reviewJoin = '';
-    const isAiCol = 'd.is_ai_drama';
-    // 显式 false：辅助函数 (getPreviousPeriodRanks / getHeatValuesOnDate / ...)
-    // 形参里有 isMySQL 默认值，但调用点引用了未声明的同名变量会让 build 失败。
-    const isMySQL = false;
+    const dia = makeDialect();
+    const { isMySQL, dateCol, rankCol, reviewJoin, isAiCol, tagsExpr, dateMinusDays, anyValue, exec } = dia;
+    // SQLite 路径仍需要 db 句柄给老 helper（仅在 SQLite 模式被调用）
+    const db = isMySQL ? null : getDb();
 
     const { searchParams } = new URL(request.url);
     const platform = searchParams.get('platform') || '';
@@ -74,15 +119,17 @@ export async function GET(request: NextRequest) {
     // 新剧榜分类过滤：all 全部(默认) | classified 仅已分类 | pending 仅待审核
     const classifyFilter = searchParams.get('classify_filter') || 'all';
 
-    const latestDateRow = db.prepare(
-      'SELECT MAX(snapshot_date) as d FROM ranking_snapshot'
-    ).get() as { d: string | null };
-    const latestDate = latestDateRow?.d || '';
+    const latestDateRows = isMySQL
+      ? await query<{ d: string | null }>(
+          "SELECT DATE_FORMAT(MAX(date_key), '%Y-%m-%d') AS d FROM ranking_snapshot"
+        )
+      : (db!.prepare('SELECT MAX(snapshot_date) as d FROM ranking_snapshot').all() as { d: string | null }[]);
+    const latestDate = latestDateRows[0]?.d || '';
 
-    const distinctDaysRow = db.prepare(
-      'SELECT COUNT(DISTINCT snapshot_date) as cnt FROM ranking_snapshot'
-    ).get() as { cnt: number };
-    const snapshotDays = distinctDaysRow?.cnt || 0;
+    const distinctDaysRows = isMySQL
+      ? await query<{ cnt: number }>('SELECT COUNT(DISTINCT date_key) AS cnt FROM ranking_snapshot')
+      : (db!.prepare('SELECT COUNT(DISTINCT snapshot_date) as cnt FROM ranking_snapshot').all() as { cnt: number }[]);
+    const snapshotDays = distinctDaysRows[0]?.cnt || 0;
 
     const requiredDays = mode === '7days' ? 7 : mode === '30days' ? 30 : 1;
     const dataAccumulating = snapshotDays < requiredDays && mode !== 'today' && mode !== 'yesterday' && mode !== 'custom';
@@ -92,22 +139,22 @@ export async function GET(request: NextRequest) {
     const params: unknown[] = [];
 
     if (mode === 'today') {
-      dateFilter = 'rs.snapshot_date = ?';
+      dateFilter = `${dateCol} = ?`;
       params.push(latestDate);
     } else if (mode === 'yesterday') {
-      dateFilter = "rs.snapshot_date = date(?, '-1 day')";
+      dateFilter = `${dateCol} = ${dateMinusDays(1)}`;
       params.push(latestDate);
     } else if (mode === '7days') {
-      dateFilter = "rs.snapshot_date >= date(?, '-6 days') AND rs.snapshot_date <= ?";
+      dateFilter = `${dateCol} >= ${dateMinusDays(6)} AND ${dateCol} <= ?`;
       params.push(latestDate, latestDate);
     } else if (mode === '30days') {
-      dateFilter = "rs.snapshot_date >= date(?, '-29 days') AND rs.snapshot_date <= ?";
+      dateFilter = `${dateCol} >= ${dateMinusDays(29)} AND ${dateCol} <= ?`;
       params.push(latestDate, latestDate);
     } else if (mode === 'custom' && startDate && endDate) {
-      dateFilter = 'rs.snapshot_date >= ? AND rs.snapshot_date <= ?';
+      dateFilter = `${dateCol} >= ? AND ${dateCol} <= ?`;
       params.push(startDate, endDate);
     } else {
-      dateFilter = 'rs.snapshot_date = ?';
+      dateFilter = `${dateCol} = ?`;
       params.push(latestDate);
     }
 
@@ -122,28 +169,39 @@ export async function GET(request: NextRequest) {
       params.push(platform);
 
       // Per-platform: get min rank over date range, order by rank
+      const safeLimit = Math.max(1, Math.floor(limit));
+      const dateAlias = isMySQL ? `DATE_FORMAT(MAX(${dateCol}), '%Y-%m-%d')` : `MAX(${dateCol})`;
+      // 非聚合列在 MySQL ONLY_FULL_GROUP_BY 下需 ANY_VALUE 包裹（SQLite 透传）
+      const firstAirAny = isMySQL
+        ? "DATE_FORMAT(ANY_VALUE(d.first_air_date), '%Y-%m-%d') AS first_air_date"
+        : 'd.first_air_date AS first_air_date';
       const sql = `
-        SELECT 
+        SELECT
           rs.playlet_id,
           rs.platform,
-          MIN(rs.rank) as rank,
+          MIN(${rankCol}) as \`rank\`,
           MAX(rs.heat_value) as heat_value,
           MAX(rs.material_count) as material_count,
           MAX(rs.invest_days) as invest_days,
-          MAX(rs.snapshot_date) as snapshot_date,
-          d.title, d.description, d.cover_url, d.language, ${isAiCol} as is_ai_drama,
-          COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags) as tags,
-          d.first_air_date, d.creative_count
+          ${dateAlias} as snapshot_date,
+          ${anyValue('d.title')} as title,
+          ${anyValue('d.description')} as description,
+          ${anyValue('d.cover_url')} as cover_url,
+          ${anyValue('d.language')} as language,
+          ${anyValue(isAiCol)} as is_ai_drama,
+          ${anyValue(tagsExpr)} as tags,
+          ${firstAirAny},
+          ${anyValue('d.creative_count')} as creative_count
         FROM ranking_snapshot rs
         LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
         ${reviewJoin}
         WHERE ${whereClause}
         GROUP BY rs.playlet_id, rs.platform
-        ${minAppearances > 0 ? `HAVING COUNT(DISTINCT rs.snapshot_date) >= ${minAppearances}` : ''}
-        ORDER BY rank ASC
-        LIMIT ?
+        ${minAppearances > 0 ? `HAVING COUNT(DISTINCT ${dateCol}) >= ${minAppearances}` : ''}
+        ORDER BY \`rank\` ASC
+        LIMIT ${safeLimit}
       `;
-      const data = db.prepare(sql).all(...params, limit) as RankingRow[];
+      const data = await exec<RankingRow>(sql, params);
 
       // Drama-level dedup: merge iOS/Android records (different playlet_id, same drama)
       const dedupMap = new Map<string, RankingRow>();
@@ -158,11 +216,11 @@ export async function GET(request: NextRequest) {
         .sort((a, b) => a.rank - b.rank);
 
       const effectiveMode = dataAccumulating ? 'today' : mode;
-      const prevData = getPreviousPeriodRanks(db, platform, isAiDrama, effectiveMode, latestDate, startDate, endDate, isMySQL);
-      const firstAppearances = getFirstAppearances(db);
+      const prevData = await getPreviousPeriodRanks(dia, platform, isAiDrama, effectiveMode, latestDate, startDate, endDate);
+      const firstAppearances = await getFirstAppearances(dia);
       const periodStart = computePeriodStartDate(effectiveMode, latestDate, startDate);
-      const baselineDate = getBaselineDate(db, effectiveMode, latestDate, startDate, endDate);
-      const baselineHeatMap = baselineDate ? getHeatValuesOnDate(db, baselineDate, isAiDrama, isMySQL) : null;
+      const baselineDate = await getBaselineDate(dia, effectiveMode, latestDate, startDate, endDate);
+      const baselineHeatMap = baselineDate ? await getHeatValuesOnDate(dia, baselineDate, isAiDrama) : null;
 
       const enriched = dedupedRows.map((item) => {
         const prev = prevData.get(`${item.playlet_id}:${item.platform}`);
@@ -186,8 +244,8 @@ export async function GET(request: NextRequest) {
         };
       });
 
-      const sparklines = getInvestTrendSparklines(
-        db, enriched.map(i => ({ playlet_id: i.playlet_id, platform }))
+      const sparklines = await getInvestTrendSparklines(
+        dia, enriched.map(i => ({ playlet_id: i.playlet_id, platform }))
       );
 
       const result = enriched.map((item, index) => ({
@@ -206,25 +264,27 @@ export async function GET(request: NextRequest) {
       // 新剧榜的 is_ai_drama 过滤策略：包含"匹配的类型"或"尚未分类(NULL)"
       // 原因：新剧刚进入系统时 is_ai_drama 通常为 NULL（待审核），若严格过滤会导致
       //       今天/昨天的新剧全部消失。新剧榜的核心价值正是发现这些未分类的新剧。
+      const dateAliasNew = isMySQL ? `DATE_FORMAT(${dateCol}, '%Y-%m-%d')` : dateCol;
+      const firstAirSelNew = isMySQL ? "DATE_FORMAT(d.first_air_date, '%Y-%m-%d') AS first_air_date" : 'd.first_air_date';
       const newSql = `
         SELECT
-          rs.playlet_id, rs.platform, rs.rank, rs.heat_value,
-          rs.material_count, rs.invest_days, rs.snapshot_date,
+          rs.playlet_id, rs.platform, ${rankCol} as \`rank\`, rs.heat_value,
+          rs.material_count, rs.invest_days, ${dateAliasNew} as snapshot_date,
           d.title, d.description, d.cover_url, d.language, ${isAiCol} as is_ai_drama,
-          COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags) as tags,
-          d.first_air_date, d.creative_count
+          ${tagsExpr} as tags,
+          ${firstAirSelNew}, d.creative_count
         FROM ranking_snapshot rs
         LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
         ${reviewJoin}
-        WHERE rs.snapshot_date = ?${isAiDrama ? ` AND (${isAiCol} = ? OR ${isAiCol} IS NULL)` : ''}
+        WHERE ${dateCol} = ?${isAiDrama ? ` AND (${isAiCol} = ? OR ${isAiCol} IS NULL)` : ''}
         ORDER BY rs.heat_value DESC
       `;
       const newSqlParams: unknown[] = [latestDate];
       if (isAiDrama) newSqlParams.push(isAiDrama);
-      const allLatest = db.prepare(newSql).all(...newSqlParams) as RankingRow[];
+      const allLatest = await exec<RankingRow>(newSql, newSqlParams);
 
-      // first_seen_date：首次进入系统的日期（MIN snapshot_date）
-      const firstSeenMap = getFirstAppearances(db);
+      // first_seen_date：首次进入系统的日期（MIN snapshot_date / date_key）
+      const firstSeenMap = await getFirstAppearances(dia);
 
       // 计算 new_window 时间范围（以 latestDate 为基准，筛 effective_new_date）
       // Bug fix: windowEnd 必须是 let，且 yesterday 需独立设置 windowEnd = windowStart
@@ -251,8 +311,8 @@ export async function GET(request: NextRequest) {
       }
 
       // 新剧榜 heat_increment 固定用"日增量"（最新日 vs 前一日 baseline）
-      const newBaselineDate = getBaselineDate(db, 'today', latestDate, '', '');
-      const newBaselineHeatMap = newBaselineDate ? getHeatValuesOnDate(db, newBaselineDate, isAiDrama, isMySQL) : null;
+      const newBaselineDate = await getBaselineDate(dia, 'today', latestDate, '', '');
+      const newBaselineHeatMap = newBaselineDate ? await getHeatValuesOnDate(dia, newBaselineDate, isAiDrama) : null;
 
       // 跨平台去重：key 不含 platform，始终选 heat_value 最大的记录作为代表
       type NewEntry = {
@@ -361,8 +421,8 @@ export async function GET(request: NextRequest) {
 
       const newSorted = filteredEntries.slice(0, limit);
 
-      const newSparklines = getInvestTrendSparklines(
-        db, newSorted.map(e => ({ playlet_id: e.item.playlet_id, platform: e.bestPlatform }))
+      const newSparklines = await getInvestTrendSparklines(
+        dia, newSorted.map(e => ({ playlet_id: e.item.playlet_id, platform: e.bestPlatform }))
       );
 
       const newResult = newSorted.map((entry, index) => {
@@ -404,25 +464,27 @@ export async function GET(request: NextRequest) {
     }
 
     // 总榜 / 趋势榜：跨平台去重聚合
+    const dateAliasOverall = isMySQL ? `DATE_FORMAT(${dateCol}, '%Y-%m-%d')` : dateCol;
+    const firstAirSelOverall = isMySQL ? "DATE_FORMAT(d.first_air_date, '%Y-%m-%d') AS first_air_date" : 'd.first_air_date';
     const sql = `
-      SELECT 
+      SELECT
         rs.playlet_id,
         rs.platform,
-        rs.rank,
+        ${rankCol} as \`rank\`,
         rs.heat_value,
         rs.material_count,
         rs.invest_days,
-        rs.snapshot_date,
+        ${dateAliasOverall} as snapshot_date,
         d.title, d.description, d.cover_url, d.language, ${isAiCol} as is_ai_drama,
-        COALESCE(d.genre_tags_manual, d.genre_tags_ai, d.tags) as tags,
-        d.first_air_date, d.creative_count
+        ${tagsExpr} as tags,
+        ${firstAirSelOverall}, d.creative_count
       FROM ranking_snapshot rs
       LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
       ${reviewJoin}
       WHERE ${whereClause}
       ORDER BY rs.heat_value DESC
     `;
-    const rawData = db.prepare(sql).all(...params) as RankingRow[];
+    const rawData = await exec<RankingRow>(sql, params);
 
     let filteredData = rawData;
     if (minAppearances > 0) {
@@ -435,10 +497,10 @@ export async function GET(request: NextRequest) {
     }
 
     const effectiveMode = dataAccumulating ? 'today' : mode;
-    const firstAppearances = getFirstAppearances(db);
+    const firstAppearances = await getFirstAppearances(dia);
     const periodStart = computePeriodStartDate(effectiveMode, latestDate, startDate);
-    const baselineDate = getBaselineDate(db, effectiveMode, latestDate, startDate, endDate);
-    const baselineHeatMap = baselineDate ? getHeatValuesOnDate(db, baselineDate, isAiDrama, isMySQL) : null;
+    const baselineDate = await getBaselineDate(dia, effectiveMode, latestDate, startDate, endDate);
+    const baselineHeatMap = baselineDate ? await getHeatValuesOnDate(dia, baselineDate, isAiDrama) : null;
 
     // Deduplicate across platforms:
     // - total mode:   keep the record with max heat_value as representative
@@ -515,10 +577,10 @@ export async function GET(request: NextRequest) {
       })
       .slice(0, limit);
 
-    const prevRankMap = getPreviousPeriodOverallRanks(db, isAiDrama, effectiveMode, latestDate, startDate, endDate, isMySQL);
+    const prevRankMap = await getPreviousPeriodOverallRanks(dia, isAiDrama, effectiveMode, latestDate, startDate, endDate);
 
-    const sparklines = getInvestTrendSparklines(
-      db, sorted.map(e => ({ playlet_id: e.item.playlet_id, platform: e.bestPlatform }))
+    const sparklines = await getInvestTrendSparklines(
+      dia, sorted.map(e => ({ playlet_id: e.item.playlet_id, platform: e.bestPlatform }))
     );
 
     const result = sorted.map((entry, index) => {
@@ -549,37 +611,41 @@ export async function GET(request: NextRequest) {
   }
 }
 
-function getPreviousPeriodRanks(
-  db: ReturnType<typeof getDb>,
+async function getPreviousPeriodRanks(
+  dia: Dialect,
   platform: string,
   isAiDrama: string,
   mode: string,
   latestDate: string,
   startDate: string,
   endDate: string,
-  isMySQL = false,
 ) {
   const map = new Map<string, { rank: number }>();
-  const reviewJoin = isMySQL ? 'LEFT JOIN drama_review dr ON d.id = dr.drama_id' : '';
-  const isAiCol = isMySQL ? 'dr.is_ai_drama' : 'd.is_ai_drama';
+  const { dateCol, rankCol, reviewJoin, isAiCol, dateMinusDays, exec, isMySQL } = dia;
   let prevDateFilter = '';
   const params: unknown[] = [];
 
   if (mode === 'today') {
-    prevDateFilter = 'rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < ?)';
+    const inner = isMySQL
+      ? 'SELECT MAX(date_key) FROM ranking_snapshot WHERE date_key < ?'
+      : 'SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < ?';
+    prevDateFilter = `${dateCol} = (${inner})`;
     params.push(latestDate);
   } else if (mode === 'yesterday') {
-    prevDateFilter = "rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < date(?, '-1 day'))";
+    const inner = isMySQL
+      ? `SELECT MAX(date_key) FROM ranking_snapshot WHERE date_key < ${dateMinusDays(1)}`
+      : "SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < date(?, '-1 day')";
+    prevDateFilter = `${dateCol} = (${inner})`;
     params.push(latestDate);
   } else if (mode === '7days') {
-    prevDateFilter = "rs.snapshot_date >= date(?, '-13 days') AND rs.snapshot_date < date(?, '-6 days')";
+    prevDateFilter = `${dateCol} >= ${dateMinusDays(13)} AND ${dateCol} < ${dateMinusDays(6)}`;
     params.push(latestDate, latestDate);
   } else if (mode === '30days') {
-    prevDateFilter = "rs.snapshot_date >= date(?, '-59 days') AND rs.snapshot_date < date(?, '-29 days')";
+    prevDateFilter = `${dateCol} >= ${dateMinusDays(59)} AND ${dateCol} < ${dateMinusDays(29)}`;
     params.push(latestDate, latestDate);
   } else if (mode === 'custom' && startDate && endDate) {
     const days = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000);
-    prevDateFilter = `rs.snapshot_date >= date(?, '-${days} days') AND rs.snapshot_date < ?`;
+    prevDateFilter = `${dateCol} >= ${dateMinusDays(days)} AND ${dateCol} < ?`;
     params.push(startDate, startDate);
   } else {
     return map;
@@ -596,7 +662,7 @@ function getPreviousPeriodRanks(
   }
 
   const sql = `
-    SELECT rs.playlet_id, rs.platform, MIN(rs.rank) as rank
+    SELECT rs.playlet_id, rs.platform, MIN(${rankCol}) as \`rank\`
     FROM ranking_snapshot rs
     LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
     ${reviewJoin}
@@ -605,44 +671,48 @@ function getPreviousPeriodRanks(
   `;
 
   try {
-    const rows = db.prepare(sql).all(...params) as { playlet_id: string; platform: string; rank: number }[];
+    const rows = await exec<{ playlet_id: string; platform: string; rank: number }>(sql, params);
     for (const row of rows) {
-      map.set(`${row.playlet_id}:${row.platform}`, { rank: row.rank });
+      map.set(`${row.playlet_id}:${row.platform}`, { rank: Number(row.rank) });
     }
   } catch { /* empty */ }
   return map;
 }
 
-function getPreviousHeatValues(
-  db: ReturnType<typeof getDb>,
+async function getPreviousHeatValues(
+  dia: Dialect,
   isAiDrama: string,
   mode: string,
   latestDate: string,
   startDate: string,
   endDate: string,
-  isMySQL = false,
 ) {
   const map = new Map<string, number>();
-  const reviewJoin = isMySQL ? 'LEFT JOIN drama_review dr ON d.id = dr.drama_id' : '';
-  const isAiCol = isMySQL ? 'dr.is_ai_drama' : 'd.is_ai_drama';
+  const { dateCol, reviewJoin, isAiCol, dateMinusDays, exec, isMySQL } = dia;
   let prevDateFilter = '';
   const params: unknown[] = [];
 
   if (mode === 'today') {
-    prevDateFilter = 'rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < ?)';
+    const inner = isMySQL
+      ? 'SELECT MAX(date_key) FROM ranking_snapshot WHERE date_key < ?'
+      : 'SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < ?';
+    prevDateFilter = `${dateCol} = (${inner})`;
     params.push(latestDate);
   } else if (mode === 'yesterday') {
-    prevDateFilter = "rs.snapshot_date = (SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < date(?, '-1 day'))";
+    const inner = isMySQL
+      ? `SELECT MAX(date_key) FROM ranking_snapshot WHERE date_key < ${dateMinusDays(1)}`
+      : "SELECT MAX(snapshot_date) FROM ranking_snapshot WHERE snapshot_date < date(?, '-1 day')";
+    prevDateFilter = `${dateCol} = (${inner})`;
     params.push(latestDate);
   } else if (mode === '7days') {
-    prevDateFilter = "rs.snapshot_date >= date(?, '-13 days') AND rs.snapshot_date < date(?, '-6 days')";
+    prevDateFilter = `${dateCol} >= ${dateMinusDays(13)} AND ${dateCol} < ${dateMinusDays(6)}`;
     params.push(latestDate, latestDate);
   } else if (mode === '30days') {
-    prevDateFilter = "rs.snapshot_date >= date(?, '-59 days') AND rs.snapshot_date < date(?, '-29 days')";
+    prevDateFilter = `${dateCol} >= ${dateMinusDays(59)} AND ${dateCol} < ${dateMinusDays(29)}`;
     params.push(latestDate, latestDate);
   } else if (mode === 'custom' && startDate && endDate) {
     const days = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000);
-    prevDateFilter = `rs.snapshot_date >= date(?, '-${days} days') AND rs.snapshot_date < ?`;
+    prevDateFilter = `${dateCol} >= ${dateMinusDays(days)} AND ${dateCol} < ?`;
     params.push(startDate, startDate);
   } else {
     return map;
@@ -664,24 +734,23 @@ function getPreviousHeatValues(
   `;
 
   try {
-    const rows = db.prepare(sql).all(...params) as { playlet_id: string; platform: string; heat_value: number }[];
+    const rows = await exec<{ playlet_id: string; platform: string; heat_value: number }>(sql, params);
     for (const row of rows) {
-      map.set(`${row.playlet_id}:${row.platform}`, row.heat_value);
+      map.set(`${row.playlet_id}:${row.platform}`, Number(row.heat_value));
     }
   } catch { /* empty */ }
   return map;
 }
 
-function getPreviousPeriodOverallRanks(
-  db: ReturnType<typeof getDb>,
+async function getPreviousPeriodOverallRanks(
+  dia: Dialect,
   isAiDrama: string,
   mode: string,
   latestDate: string,
   startDate: string,
   endDate: string,
-  isMySQL = false,
 ) {
-  const prevHeatMap = getPreviousHeatValues(db, isAiDrama, mode, latestDate, startDate, endDate, isMySQL);
+  const prevHeatMap = await getPreviousHeatValues(dia, isAiDrama, mode, latestDate, startDate, endDate);
   const dramaHeats = new Map<string, number>();
   prevHeatMap.forEach((heat, key) => {
     const pid = key.split(':')[0];
@@ -694,8 +763,8 @@ function getPreviousPeriodOverallRanks(
   return rankMap;
 }
 
-function getInvestTrendSparklines(
-  db: ReturnType<typeof getDb>,
+async function getInvestTrendSparklines(
+  dia: Dialect,
   entries: Array<{ playlet_id: string; platform: string }>,
 ) {
   const map = new Map<string, number[]>();
@@ -714,21 +783,22 @@ function getInvestTrendSparklines(
       const platform = platforms[pi];
       const pids = byPlatform.get(platform)!;
       const placeholders = pids.map(() => '?').join(',');
+      const dateSel = dia.isMySQL ? "DATE_FORMAT(date, '%Y-%m-%d') AS date" : 'date';
       const sql = `
-        SELECT playlet_id, date, daily_invest_count
+        SELECT playlet_id, ${dateSel}, daily_invest_count
         FROM invest_trend
         WHERE playlet_id IN (${placeholders}) AND platform = ?
         ORDER BY date ASC
       `;
 
-      const rows = db.prepare(sql).all(...pids, platform) as {
-        playlet_id: string; date: string; daily_invest_count: number;
-      }[];
+      const rows = await dia.exec<{ playlet_id: string; date: string; daily_invest_count: number }>(
+        sql, [...pids, platform]
+      );
 
       const grouped = new Map<string, number[]>();
       for (const row of rows) {
         if (!grouped.has(row.playlet_id)) grouped.set(row.playlet_id, []);
-        grouped.get(row.playlet_id)!.push(row.daily_invest_count);
+        grouped.get(row.playlet_id)!.push(Number(row.daily_invest_count));
       }
 
       const groupedKeys = Array.from(grouped.keys());
@@ -754,75 +824,77 @@ function computePeriodStartDate(mode: string, latestDate: string, startDate: str
   return startDate || latestDate;
 }
 
-function getFirstAppearances(db: ReturnType<typeof getDb>): Map<string, string> {
+async function getFirstAppearances(dia: Dialect): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   try {
-    const rows = db.prepare(
-      'SELECT playlet_id, MIN(snapshot_date) as first_date FROM ranking_snapshot GROUP BY playlet_id'
-    ).all() as { playlet_id: string; first_date: string }[];
+    const sql = dia.isMySQL
+      ? "SELECT playlet_id, DATE_FORMAT(MIN(date_key), '%Y-%m-%d') AS first_date FROM ranking_snapshot GROUP BY playlet_id"
+      : 'SELECT playlet_id, MIN(snapshot_date) as first_date FROM ranking_snapshot GROUP BY playlet_id';
+    const rows = await dia.exec<{ playlet_id: string; first_date: string }>(sql, []);
     for (const row of rows) map.set(row.playlet_id, row.first_date);
   } catch { /* empty */ }
   return map;
 }
 
-function getBaselineDate(
-  db: ReturnType<typeof getDb>,
+async function getBaselineDate(
+  dia: Dialect,
   mode: string,
   latestDate: string,
   startDate: string,
   endDate: string,
-): string | null {
+): Promise<string | null> {
+  const { dateCol, dateMinusDays, exec, isMySQL } = dia;
+  const dAlias = isMySQL ? `DATE_FORMAT(${dateCol}, '%Y-%m-%d')` : dateCol;
+  const dMaxAlias = isMySQL ? `DATE_FORMAT(MAX(${dateCol}), '%Y-%m-%d')` : `MAX(${dateCol})`;
   let sql = '';
   const params: unknown[] = [];
 
   if (mode === 'today') {
-    sql = "SELECT snapshot_date as d FROM ranking_snapshot WHERE snapshot_date = date(?, '-1 day') LIMIT 1";
+    sql = `SELECT ${dAlias} as d FROM ranking_snapshot rs WHERE ${dateCol} = ${dateMinusDays(1)} LIMIT 1`;
     params.push(latestDate);
   } else if (mode === 'yesterday') {
-    sql = "SELECT snapshot_date as d FROM ranking_snapshot WHERE snapshot_date = date(?, '-2 days') LIMIT 1";
+    sql = `SELECT ${dAlias} as d FROM ranking_snapshot rs WHERE ${dateCol} = ${dateMinusDays(2)} LIMIT 1`;
     params.push(latestDate);
   } else if (mode === '7days') {
-    sql = "SELECT MAX(snapshot_date) as d FROM ranking_snapshot WHERE snapshot_date <= date(?, '-7 days') AND snapshot_date >= date(?, '-10 days')";
+    sql = `SELECT ${dMaxAlias} as d FROM ranking_snapshot rs WHERE ${dateCol} <= ${dateMinusDays(7)} AND ${dateCol} >= ${dateMinusDays(10)}`;
     params.push(latestDate, latestDate);
   } else if (mode === '30days') {
-    sql = "SELECT MAX(snapshot_date) as d FROM ranking_snapshot WHERE snapshot_date <= date(?, '-30 days') AND snapshot_date >= date(?, '-34 days')";
+    sql = `SELECT ${dMaxAlias} as d FROM ranking_snapshot rs WHERE ${dateCol} <= ${dateMinusDays(30)} AND ${dateCol} >= ${dateMinusDays(34)}`;
     params.push(latestDate, latestDate);
   } else if (mode === 'custom' && startDate && endDate) {
-    sql = "SELECT MAX(snapshot_date) as d FROM ranking_snapshot WHERE snapshot_date < ? AND snapshot_date >= date(?, '-4 days')";
+    sql = `SELECT ${dMaxAlias} as d FROM ranking_snapshot rs WHERE ${dateCol} < ? AND ${dateCol} >= ${dateMinusDays(4)}`;
     params.push(startDate, startDate);
   } else {
     return null;
   }
 
   try {
-    const row = db.prepare(sql).get(...params) as { d: string | null } | undefined;
-    return row?.d || null;
+    const rows = await exec<{ d: string | null }>(sql, params);
+    return rows[0]?.d || null;
   } catch { return null; }
 }
 
-function getHeatValuesOnDate(
-  db: ReturnType<typeof getDb>,
+async function getHeatValuesOnDate(
+  dia: Dialect,
   baselineDate: string,
   isAiDrama: string,
-  isMySQL = false,
-): Map<string, number> {
+): Promise<Map<string, number>> {
   const map = new Map<string, number>();
-  const reviewJoin = isMySQL ? 'LEFT JOIN drama_review dr ON d.id = dr.drama_id' : '';
-  const isAiCol = isMySQL ? 'dr.is_ai_drama' : 'd.is_ai_drama';
+  const { dateCol, reviewJoin, isAiCol, exec } = dia;
   const params: unknown[] = [baselineDate];
-  let where = 'rs.snapshot_date = ?';
+  let where = `${dateCol} = ?`;
   if (isAiDrama) { where += ` AND ${isAiCol} = ?`; params.push(isAiDrama); }
 
   try {
-    const rows = db.prepare(`
+    const rows = await exec<{ playlet_id: string; platform: string; heat_value: number }>(`
       SELECT rs.playlet_id, rs.platform, MAX(rs.heat_value) as heat_value
       FROM ranking_snapshot rs
       LEFT JOIN drama d ON rs.playlet_id = d.playlet_id
       ${reviewJoin}
       WHERE ${where}
       GROUP BY rs.playlet_id, rs.platform
-    `).all(...params) as { playlet_id: string; platform: string; heat_value: number }[];
-    for (const row of rows) map.set(`${row.playlet_id}:${row.platform}`, row.heat_value);
+    `, params);
+    for (const row of rows) map.set(`${row.playlet_id}:${row.platform}`, Number(row.heat_value));
   } catch { /* empty */ }
   return map;
 }
