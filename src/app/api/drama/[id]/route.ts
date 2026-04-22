@@ -93,6 +93,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
         const sets: string[] = [];
         const values: unknown[] = [];
+        let touchedReviewStatus = false;
         for (const [k, v] of Object.entries(reviewFields)) {
           if (k === 'genre_tags_manual' || k === 'genre_tags_ai') {
             sets.push(`${k} = ?`);
@@ -101,7 +102,24 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
             sets.push(`${k} = ?`);
             values.push(v);
           }
+          if (k === 'review_status') touchedReviewStatus = true;
         }
+
+        // 关键修复：根据本次 PATCH 的 is_ai_drama 自动推进 / 回退 review_status。
+        // - is_ai_drama 非 null：视作"完成审核" → 'reviewed' + reviewed_at=NOW
+        // - is_ai_drama 显式 null（撤销）：回退到 'pending' + 清 reviewed_at
+        // 调用方若显式传了 review_status 则尊重调用方。
+        if (!touchedReviewStatus && Object.prototype.hasOwnProperty.call(reviewFields, 'is_ai_drama')) {
+          const aiVal = reviewFields['is_ai_drama'];
+          if (aiVal === null) {
+            sets.push("review_status = 'pending'");
+            sets.push('reviewed_at = NULL');
+          } else {
+            sets.push("review_status = 'reviewed'");
+            sets.push('reviewed_at = NOW()');
+          }
+        }
+
         sets.push('updated_at = NOW()');
         values.push(dramaRow.id);
 
