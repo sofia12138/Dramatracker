@@ -109,7 +109,11 @@ pm2 logs dramatracker
 # 重启应用
 pm2 restart dramatracker
 
-# 更新代码后重新部署
+# 更新代码后重新部署（推荐：一键脚本，含健康检查 + 失败自动回滚）
+cd /opt/dramatracker
+bash scripts/deploy/update.sh
+
+# 或手动执行（不含健康检查/回滚）
 cd /opt/dramatracker
 git pull origin main
 npm run build
