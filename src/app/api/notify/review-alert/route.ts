@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { getPendingReviewCounts } from '@/lib/review-count';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,24 +21,14 @@ export async function POST() {
   }
 
   try {
-    const db = getDb();
-    const { count } = db.prepare(
-      'SELECT COUNT(*) as count FROM drama WHERE is_ai_drama IS NULL'
-    ).get() as { count: number };
+    // 与 /api/drama/pending-count、审核页使用同一套统计，避免 MySQL 模式下飞书读 SQLite 导致数字不一致
+    const { total: count, platformCounts: platformRows } = await getPendingReviewCounts();
 
     if (count === 0) {
       return NextResponse.json({ success: true, count: 0, notified: false, message: '当前无待审核短剧' });
     }
 
-    const platformRows = db.prepare(`
-      SELECT rs.platform, COUNT(DISTINCT rs.playlet_id) as cnt
-      FROM ranking_snapshot rs
-      INNER JOIN drama d ON rs.playlet_id = d.playlet_id
-      WHERE d.is_ai_drama IS NULL
-      GROUP BY rs.platform ORDER BY cnt DESC
-    `).all() as { platform: string; cnt: number }[];
-
-    const platformDetail = platformRows.map(r => `  ${r.platform}: ${r.cnt}部`).join('\n');
+    const platformDetail = platformRows.map(r => `  ${r.platform}: ${r.count}部`).join('\n');
 
     const text = [
       `⚠️ 当前有 ${count} 条待审核短剧，请及时处理。`,
