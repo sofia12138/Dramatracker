@@ -40,6 +40,11 @@ function parseProductIds(ids: string): number[] {
   try { return JSON.parse(ids); } catch { return []; }
 }
 
+/** API 成功时为数组，失败时可能为 { error: string } */
+function asPlatformList(data: unknown): Platform[] {
+  return Array.isArray(data) ? data : [];
+}
+
 export default function SettingsPage() {
   const [config, setConfig] = useState<Config | null>(null);
   const [platforms, setPlatforms] = useState<Platform[]>([]);
@@ -92,7 +97,7 @@ export default function SettingsPage() {
       setCookieText(configRes.cookie || '');
       setAutoFetchEnabled(configRes.auto_fetch_enabled || false);
       setAutoFetchTime(configRes.auto_fetch_time || '09:00');
-      setPlatforms(platformsRes);
+      setPlatforms(asPlatformList(platformsRes));
       setStats(statsRes);
     } catch { /* ignore */ }
     setLoading(false);
@@ -223,7 +228,7 @@ export default function SettingsPage() {
     setEditingPlatform(null);
     setPlatformForm({ name: '', android_id: '', ios_id: '' });
     const res = await apiFetch('/api/platforms').then(r => r.json());
-    setPlatforms(res);
+    setPlatforms(asPlatformList(res));
   };
 
   const handleTogglePlatform = async (platform: Platform) => {
@@ -235,7 +240,7 @@ export default function SettingsPage() {
     });
     showToast(newActive ? `${platform.name} 已启用` : `${platform.name} 已停用`);
     const res = await apiFetch('/api/platforms').then(r => r.json());
-    setPlatforms(res);
+    setPlatforms(asPlatformList(res));
   };
 
   const handleDeletePlatform = async (id: number) => {
@@ -243,7 +248,7 @@ export default function SettingsPage() {
     showToast('平台已删除');
     setConfirmDelete(null);
     const res = await apiFetch('/api/platforms').then(r => r.json());
-    setPlatforms(res);
+    setPlatforms(asPlatformList(res));
   };
 
   const handleEditPlatform = (p: Platform) => {
