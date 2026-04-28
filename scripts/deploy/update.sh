@@ -139,9 +139,10 @@ sleep 5
 
 HEALTH_OK=0
 for i in 1 2 3 4 5 6; do
-  CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/drama/pending-count" || echo "000")
-  if [ "$CODE" = "200" ]; then
-    ok "健康检查通过 ($BASE_URL/api/drama/pending-count → 200)"
+  # /login 是公开页面（无需登录），用于判断 Next.js 服务是否已就绪
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/login" || echo "000")
+  if [ "$CODE" = "200" ] || [ "$CODE" = "307" ] || [ "$CODE" = "302" ]; then
+    ok "健康检查通过 ($BASE_URL/login → $CODE)"
     HEALTH_OK=1
     break
   fi
