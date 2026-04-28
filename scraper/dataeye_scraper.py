@@ -131,6 +131,41 @@ URL_DETAIL = "https://oversea-v2.dataeye.com/api/playlet/getPlayletInfo"
 URL_TREND = "https://oversea-v2.dataeye.com/api/playlet/listTrendByPlaylet"
 
 # ---------------------------------------------------------------------------
+# [material-preview] TODO: 素材视频 URL 抓取尚未实现
+# ---------------------------------------------------------------------------
+# 现状（已实测，2026-04-28）：
+#   - getPlayletInfo 返回的 mediaList 只是广告投放渠道清单
+#     （如 [{id:501, mediaName:"AdMob", logoUrl:"..."}]），不含视频本体
+#   - adxPlayletList 在 DramaWave 样本上为空数组
+#   - creativeCnt / materialCnt 仅是计数，没有素材链接
+#
+# 方案备选（任意一条都需要再做一次 DataEye JS 逆向 + 签名验证）：
+#   A. 找到 DataEye 后台真正的素材列表接口（可能是 listMaterial / getMaterial 等），
+#      复用 compute_sign 调用，从中取 videoUrl + coverUrl
+#   B. 通过 productList 的 storeType + productId 反查应用商店的预览视频
+#   C. 接入第三方素材库
+#
+# 落地原则（由产品需求确定，不可违反）：
+#   - **不允许伪造素材链接**
+#   - 抓取失败不能影响剧集榜单主流程
+#   - 写库时 ON DUPLICATE KEY 仅更新素材自身字段，绝不触碰 drama / drama_review
+#
+# 任何后续实现请保持本函数签名不变，方便 upsert_drama 后挂载调用：
+def try_fetch_material_preview(cookie: str, playlet_id: str, headers: dict) -> dict | None:
+    """[material-preview] 占位：返回 None 表示当前暂无可抓取素材。
+
+    返回结构（实现后必须遵循）：
+        {
+            "video_url": str,   # 必填，HTML5 video 可直接播放的 URL
+            "cover_url": str | None,
+            "source":    str,   # 例如 "dataeye:listMaterial"
+            "raw":       dict,  # 原始响应，落 raw_payload 列
+        }
+    """
+    debug(f"[material-preview] try_fetch skipped (no impl) playletId={playlet_id}")
+    return None
+
+# ---------------------------------------------------------------------------
 # 语种映射
 # ---------------------------------------------------------------------------
 LANG_MAP = {

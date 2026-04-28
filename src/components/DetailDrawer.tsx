@@ -25,11 +25,20 @@ interface Drama {
   creative_count: number;
 }
 
+interface MaterialPreview {
+  video_url: string | null;
+  cover_url: string | null;
+  source: string | null;
+  fetched_at: string | null;
+}
+
 interface DetailData {
   drama: Drama | null;
   investTrend: { platform: string; date: string; daily_invest_count: number }[];
   heatTrend: { platform: string; date: string; heat_value: number }[];
   latestRanks: { platform: string; rank: number; heat_value: number }[];
+  // null = 该剧暂无素材记录；未传 = 后端旧版本（前端按"暂无"展示）
+  material_preview?: MaterialPreview | null;
 }
 
 interface PlayCountPoint {
@@ -55,6 +64,8 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
   const [descText, setDescText] = useState('');
   const [editingTags, setEditingTags] = useState(false);
   const [playCountData, setPlayCountData] = useState<PlayCountPoint[]>([]);
+  // 素材预览的视频加载错误：仅本次抽屉生命周期内有效
+  const [materialError, setMaterialError] = useState(false);
   const investChartRef = useRef<HTMLDivElement>(null);
   const heatChartRef = useRef<HTMLDivElement>(null);
   const rankChartRef = useRef<HTMLDivElement>(null);
@@ -66,6 +77,7 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
   useEffect(() => {
     if (!playletId) return;
     setLoading(true);
+    setMaterialError(false);
     apiFetch(`/api/ranking/detail?playlet_id=${playletId}`)
       .then(r => r.json())
       .then(d => {
@@ -392,6 +404,58 @@ export default function DetailDrawer({ playletId, onClose }: Props) {
                     {data.drama.description || '暂无简介'}
                   </p>
                 )}
+              </div>
+
+              {/* Material Preview ───────────────────────────────────────
+                  位置：基础信息 / 简介 之后，榜单/趋势信息之前
+                  当前只展示 1 条；表结构允许多条，预留未来扩展
+                  数据缺失三种情况都做了空状态处理：
+                    1) material_preview 字段未返回（旧后端） → 视为暂无
+                    2) material_preview === null            → 视为暂无
+                    3) material_preview.video_url 为空     → 视为暂无 */}
+              <div>
+                <h3 className="text-sm font-semibold text-primary-text mb-3">素材预览</h3>
+                {(() => {
+                  const mp = data.material_preview;
+                  const videoUrl = mp?.video_url || '';
+                  if (!mp || !videoUrl) {
+                    return (
+                      <div className="h-32 flex items-center justify-center text-sm text-primary-text-muted border border-primary-border rounded-lg">
+                        暂无可预览素材
+                      </div>
+                    );
+                  }
+                  if (materialError) {
+                    return (
+                      <div className="h-32 flex flex-col items-center justify-center gap-1 text-sm text-red-500 border border-red-200 bg-red-50/40 rounded-lg">
+                        <span>素材加载失败，可检查素材链接是否失效</span>
+                        <span className="text-[11px] text-red-400 break-all px-3 text-center">{videoUrl}</span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="space-y-2">
+                      <div className="rounded-lg overflow-hidden border border-primary-border bg-black">
+                        <video
+                          key={videoUrl}
+                          src={videoUrl}
+                          poster={mp.cover_url || undefined}
+                          controls
+                          preload="metadata"
+                          playsInline
+                          className="w-full max-h-[320px] object-contain bg-black"
+                          onError={() => setMaterialError(true)}
+                        />
+                      </div>
+                      {(mp.source || mp.fetched_at) && (
+                        <div className="flex items-center gap-2 text-[11px] text-primary-text-muted">
+                          {mp.source && <span>来源：{mp.source}</span>}
+                          {mp.fetched_at && <span>抓取于 {mp.fetched_at}</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Invest Trend Chart */}

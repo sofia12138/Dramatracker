@@ -168,6 +168,23 @@ function initDb(db: Database.Database) {
       expires_at TEXT
     );
 
+    -- 素材预览：每个剧集预留多条素材记录，详情页当前只展示 created_at 最新的一条。
+    -- 设计目的：与人审字段（is_ai_drama / genre_tags_*）完全隔离，
+    -- 抓取/同步素材数据不会触碰 drama / drama_review。
+    CREATE TABLE IF NOT EXISTS drama_material_asset (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      drama_id INTEGER NOT NULL,
+      playlet_id TEXT NOT NULL,
+      platform TEXT,
+      video_url TEXT,
+      cover_url TEXT,
+      source TEXT,
+      raw_payload TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (drama_id) REFERENCES drama(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_ai_cache_key ON ai_cache(cache_key);
     CREATE INDEX IF NOT EXISTS idx_ranking_snapshot_date ON ranking_snapshot(snapshot_date);
     CREATE INDEX IF NOT EXISTS idx_ranking_snapshot_playlet ON ranking_snapshot(playlet_id);
@@ -175,6 +192,8 @@ function initDb(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_invest_trend_playlet ON invest_trend(playlet_id);
     CREATE INDEX IF NOT EXISTS idx_drama_play_count_playlet ON drama_play_count(playlet_id);
     CREATE INDEX IF NOT EXISTS idx_drama_is_ai ON drama(is_ai_drama);
+    CREATE INDEX IF NOT EXISTS idx_material_drama_id ON drama_material_asset(drama_id);
+    CREATE INDEX IF NOT EXISTS idx_material_playlet ON drama_material_asset(playlet_id);
   `);
 
   migrateGenreColumns(db);

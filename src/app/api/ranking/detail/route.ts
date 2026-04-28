@@ -14,6 +14,19 @@ function normalizeDramaJsonFields(drama: Record<string, unknown> | null): Record
   return drama;
 }
 
+/**
+ * 素材预览：当前每个剧集只取 created_at 最新的 1 条；表结构允许多条以预留扩展。
+ * 字段统一返回 4 个：video_url / cover_url / source / fetched_at
+ *  - 取不到任何记录 → 返回 null（前端展示空状态）
+ *  - 任何 SQL 异常都吞掉 → 返回 null，避免拖累详情主流程
+ */
+type MaterialPreview = {
+  video_url: string | null;
+  cover_url: string | null;
+  source: string | null;
+  fetched_at: string | null;
+} | null;
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -79,7 +92,8 @@ export async function GET(request: NextRequest) {
         [playletId]
       );
 
-      return NextResponse.json({ drama, rankings, investTrend, heatTrend, latestRanks });
+      const material_preview = await loadMaterialPreviewMysql(playletId);
+      return NextResponse.json({ drama, rankings, investTrend, heatTrend, latestRanks, material_preview });
     }
 
     // ── SQLite 兜底 ────────────────────────────────────────────────
@@ -117,9 +131,63 @@ export async function GET(request: NextRequest) {
       ORDER BY rs.rank ASC
     `).all(playletId);
 
-    return NextResponse.json({ drama, rankings, investTrend, heatTrend, latestRanks });
+    const material_preview = loadMaterialPreviewSqlite(playletId);
+    return NextResponse.json({ drama, rankings, investTrend, heatTrend, latestRanks, material_preview });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+// ── 素材预览 loader ─────────────────────────────────────────────────────────
+async function loadMaterialPreviewMysql(playletId: string): Promise<MaterialPreview> {
+  try {
+    const rows = await query<{
+      video_url: string | null;
+      cover_url: string | null;
+      source: string | null;
+      created_at: string | null;
+    }>(
+      `SELECT video_url, cover_url, source,
+              DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+       FROM drama_material_asset
+       WHERE playlet_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [playletId]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      video_url: row.video_url ?? null,
+      cover_url: row.cover_url ?? null,
+      source: row.source ?? null,
+      fetched_at: row.created_at ?? null,
+    };
+  } catch {
+    // 表不存在 / 查询失败：详情接口主流程不能因此 500，静默兜底
+    return null;
+  }
+}
+
+function loadMaterialPreviewSqlite(playletId: string): MaterialPreview {
+  try {
+    const db = getDb();
+    const row = db.prepare(
+      `SELECT video_url, cover_url, source, created_at
+       FROM drama_material_asset
+       WHERE playlet_id = ?
+       ORDER BY datetime(created_at) DESC, id DESC
+       LIMIT 1`
+    ).get(playletId) as { video_url: string | null; cover_url: string | null; source: string | null; created_at: string | null } | undefined;
+    if (!row) return null;
+    return {
+      video_url: row.video_url ?? null,
+      cover_url: row.cover_url ?? null,
+      source: row.source ?? null,
+      fetched_at: row.created_at ?? null,
+    };
+  } catch {
+    return null;
   }
 }
