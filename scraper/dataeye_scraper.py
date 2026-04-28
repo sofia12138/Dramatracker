@@ -25,6 +25,12 @@ try:
 except ImportError:
     detect = None
 
+# [material-preview] PyMySQL 是可选依赖：缺失时只写本地 SQLite，不阻塞主流程
+try:
+    import pymysql  # type: ignore
+except ImportError:
+    pymysql = None  # type: ignore
+
 # B3-c 双写：本地 SQLite + 线上 sync API（失败入队，下次启动重试）
 try:
     from . import sync_buffer  # type: ignore
@@ -129,41 +135,88 @@ def _wrap_fallback() -> list[dict]:
 URL_LIST = "https://oversea-v2.dataeye.com/api/product/listPlayletDistribution"
 URL_DETAIL = "https://oversea-v2.dataeye.com/api/playlet/getPlayletInfo"
 URL_TREND = "https://oversea-v2.dataeye.com/api/playlet/listTrendByPlaylet"
+URL_SEARCH_CREATIVE = "https://oversea-v2.dataeye.com/api/playlet/creative/searchCreative"
 
 # ---------------------------------------------------------------------------
-# [material-preview] TODO: 素材视频 URL 抓取尚未实现
+# [material-preview] DataEye searchCreative 接入
 # ---------------------------------------------------------------------------
-# 现状（已实测，2026-04-28）：
-#   - getPlayletInfo 返回的 mediaList 只是广告投放渠道清单
-#     （如 [{id:501, mediaName:"AdMob", logoUrl:"..."}]），不含视频本体
-#   - adxPlayletList 在 DramaWave 样本上为空数组
-#   - creativeCnt / materialCnt 仅是计数，没有素材链接
-#
-# 方案备选（任意一条都需要再做一次 DataEye JS 逆向 + 签名验证）：
-#   A. 找到 DataEye 后台真正的素材列表接口（可能是 listMaterial / getMaterial 等），
-#      复用 compute_sign 调用，从中取 videoUrl + coverUrl
-#   B. 通过 productList 的 storeType + productId 反查应用商店的预览视频
-#   C. 接入第三方素材库
+# 接口契约（已实测验证）：
+#   POST https://oversea-v2.dataeye.com/api/playlet/creative/searchCreative
+#   payload = {
+#     pageId: 1, pageSize: 1, sortBy: 'FIRST_SEEN',
+#     showFlag: 0, deduplicationBy: 'SMART',
+#     playletId: <pid>, thisTimes: <ms>, sign: <compute_sign>
+#   }
+#   响应 content.searchList[0]:
+#     videoList[0]  -> 视频 URL（dataeye OSS 域名，无 expire 签名，可永久存储）
+#     picList[0]    -> 封面 URL
+#     materialId    -> 素材去重 key
+#     media.mediaName, firstSeen, countries[0].countryName 用于来源信息
 #
 # 落地原则（由产品需求确定，不可违反）：
-#   - **不允许伪造素材链接**
-#   - 抓取失败不能影响剧集榜单主流程
-#   - 写库时 ON DUPLICATE KEY 仅更新素材自身字段，绝不触碰 drama / drama_review
-#
-# 任何后续实现请保持本函数签名不变，方便 upsert_drama 后挂载调用：
-def try_fetch_material_preview(cookie: str, playlet_id: str, headers: dict) -> dict | None:
-    """[material-preview] 占位：返回 None 表示当前暂无可抓取素材。
-
-    返回结构（实现后必须遵循）：
-        {
-            "video_url": str,   # 必填，HTML5 video 可直接播放的 URL
-            "cover_url": str | None,
-            "source":    str,   # 例如 "dataeye:listMaterial"
-            "raw":       dict,  # 原始响应，落 raw_payload 列
-        }
+#   - 不允许伪造素材链接
+#   - 抓取失败不能影响剧集榜单主流程（fetch / upsert 都包 try/except）
+#   - 不触碰 drama / drama_review / is_ai_drama / genre_tags_*
+def fetch_material_preview(cookie: str, playlet_id: str, headers: dict) -> dict | None:
+    """调 searchCreative 拿这部剧 FIRST_SEEN 排序最新的 1 条素材。
+    出错 / 无数据 / 无视频 URL 都返回 None。
     """
-    debug(f"[material-preview] try_fetch skipped (no impl) playletId={playlet_id}")
-    return None
+    payload = {
+        "pageId": 1,
+        "pageSize": 1,
+        "sortBy": "FIRST_SEEN",
+        "showFlag": 0,
+        "deduplicationBy": "SMART",
+        "playletId": playlet_id,
+        "thisTimes": str(int(time.time() * 1000)),
+    }
+    payload["sign"] = compute_sign(payload)
+    resp = _request_with_retry(URL_SEARCH_CREATIVE, payload, headers)
+    debug(f"[material-preview] searchCreative HTTP {resp.status_code} len={len(resp.text)}")
+    data = resp.json()
+    # searchCreative 返回 msg='Success'（首字母大写），与 check_response 期望的 'success' 不一致
+    # 因此独立判 statusCode；401/token 失效仍走标准退出逻辑
+    code = data.get("statusCode")
+    if code == 401:
+        log("❌ Cookie 已失效，请更新")
+        sys.exit(1)
+    if code != 200:
+        debug(f"[material-preview] searchCreative 业务错误: statusCode={code} msg={data.get('msg')}")
+        return None
+    content = data.get("content") or {}
+    items = content.get("searchList") or []
+    if not items:
+        debug(f"[material-preview] no creative for playletId={playlet_id}")
+        return None
+    m = items[0]
+    video_list = m.get("videoList") or []
+    if not video_list or not isinstance(video_list[0], str):
+        debug(f"[material-preview] first creative has no videoList playletId={playlet_id}")
+        return None
+    pic_list = m.get("picList") or []
+    media = m.get("media") or {}
+    media_name = media.get("mediaName") if isinstance(media, dict) else None
+    countries = m.get("countries") or []
+    country_name = (countries[0] or {}).get("countryName") if countries and isinstance(countries[0], dict) else None
+    return {
+        "video_url": video_list[0],
+        "cover_url": pic_list[0] if pic_list and isinstance(pic_list[0], str) else None,
+        "material_id": m.get("materialId"),
+        "media_name": media_name,
+        "country_name": country_name,
+        "first_seen": m.get("firstSeen"),
+        "source": f"dataeye:searchCreative" + (f" via {media_name}" if media_name else ""),
+        "raw": m,
+    }
+
+
+def try_fetch_material_preview(cookie: str, playlet_id: str, headers: dict) -> dict | None:
+    """主流程入口：包好异常，绝不让 material 抓取拖累 drama / ranking 主流程。"""
+    try:
+        return fetch_material_preview(cookie, playlet_id, headers)
+    except Exception as e:
+        debug(f"[material-preview] fetch failed playletId={playlet_id}: {e}")
+        return None
 
 # ---------------------------------------------------------------------------
 # 语种映射
@@ -487,6 +540,136 @@ def upsert_drama(conn: sqlite3.Connection, info: dict, language: str):
     sync_buffer.add_drama(info, language)
 
 
+# ---------------------------------------------------------------------------
+# [material-preview] 素材入库（本地 SQLite + 远端 MySQL 双写）
+# ---------------------------------------------------------------------------
+# 远端 MySQL 走 SSH tunnel 上的 127.0.0.1:3307（与 Next.js 进程使用同一通路）。
+# 配置缺失或连接失败时只写本地 SQLite，不抛错。
+_MYSQL_CFG_CACHE: dict | None = None
+
+
+def _load_mysql_cfg() -> dict | None:
+    global _MYSQL_CFG_CACHE
+    if _MYSQL_CFG_CACHE is not None:
+        return _MYSQL_CFG_CACHE
+    env_path = BASE_DIR / ".env.local"
+    if not env_path.exists():
+        debug("[material-preview] .env.local 不存在，跳过远端 MySQL 双写")
+        _MYSQL_CFG_CACHE = {}
+        return None
+    cfg: dict = {}
+    for raw in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        cfg[k.strip()] = v.strip().strip('"').strip("'")
+    if cfg.get("USE_MYSQL", "").lower() != "true":
+        debug("[material-preview] USE_MYSQL!=true，跳过远端 MySQL 双写")
+        _MYSQL_CFG_CACHE = {}
+        return None
+    out = {
+        "host": cfg.get("MYSQL_HOST", "127.0.0.1"),
+        "port": int(cfg.get("MYSQL_PORT", "3306")),
+        "user": cfg.get("MYSQL_USER", ""),
+        "password": cfg.get("MYSQL_PASSWORD", ""),
+        "database": cfg.get("MYSQL_DATABASE", ""),
+    }
+    _MYSQL_CFG_CACHE = out
+    return out
+
+
+def _upsert_material_asset_remote(playlet_id: str, platform: str, asset: dict) -> None:
+    """写远端 MySQL drama_material_asset。失败只记日志，不抛。
+    去重策略：同 (playlet_id, source 中的 materialId) 已存在则跳过 INSERT。
+    """
+    if pymysql is None:
+        debug("[material-preview] pymysql 未安装，跳过远端写入")
+        return
+    cfg = _load_mysql_cfg()
+    if not cfg:
+        return
+    material_id = asset.get("material_id")
+    try:
+        conn_my = pymysql.connect(
+            host=cfg["host"], port=cfg["port"], user=cfg["user"],
+            password=cfg["password"], database=cfg["database"],
+            charset="utf8mb4", connect_timeout=10,
+        )
+        try:
+            with conn_my.cursor() as cur:
+                cur.execute("SELECT id FROM drama WHERE playlet_id=%s LIMIT 1", (playlet_id,))
+                row = cur.fetchone()
+                if not row:
+                    debug(f"[material-preview] 远端 drama 没有 playlet_id={playlet_id}，跳过素材写入")
+                    return
+                drama_id = row[0]
+                # 去重：同 (drama_id, materialId via source) 已有则跳过
+                if material_id is not None:
+                    cur.execute(
+                        "SELECT id FROM drama_material_asset WHERE drama_id=%s "
+                        "AND JSON_EXTRACT(raw_payload, '$.materialId') = %s LIMIT 1",
+                        (drama_id, material_id),
+                    )
+                    if cur.fetchone():
+                        debug(f"[material-preview] 远端已存在 materialId={material_id}，跳过")
+                        return
+                cur.execute(
+                    "INSERT INTO drama_material_asset "
+                    "(drama_id, playlet_id, platform, video_url, cover_url, source, raw_payload) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (drama_id, playlet_id, platform, asset.get("video_url"),
+                     asset.get("cover_url"), asset.get("source"),
+                     json.dumps(asset.get("raw"), ensure_ascii=False) if asset.get("raw") else None),
+                )
+            conn_my.commit()
+            debug(f"[material-preview] 远端 INSERT 成功 playlet_id={playlet_id} materialId={material_id}")
+        finally:
+            conn_my.close()
+    except Exception as e:
+        log(f"  ⚠️ [material-preview] 远端 MySQL 写入失败 playlet_id={playlet_id}: {e}")
+
+
+def upsert_material_asset(conn: sqlite3.Connection, playlet_id: str, platform: str, asset: dict) -> None:
+    """本地 SQLite + 远端 MySQL 双写素材记录。失败不抛。
+
+    去重策略：同 (playlet_id, source 中的 materialId) 已存在则跳过 INSERT，
+              避免每次抓取都堆积重复行；不同 materialId 则保留多条历史。
+    """
+    material_id = asset.get("material_id")
+    try:
+        # 本地 drama_id 反查
+        row = conn.execute("SELECT id FROM drama WHERE playlet_id = ?", (playlet_id,)).fetchone()
+        if not row:
+            debug(f"[material-preview] 本地 drama 没有 playlet_id={playlet_id}，跳过素材写入")
+            return
+        drama_id = row[0]
+        # 本地去重
+        if material_id is not None:
+            dup = conn.execute(
+                "SELECT id FROM drama_material_asset WHERE drama_id=? "
+                "AND json_extract(raw_payload, '$.materialId') = ? LIMIT 1",
+                (drama_id, material_id),
+            ).fetchone()
+            if dup:
+                debug(f"[material-preview] 本地已存在 materialId={material_id}，跳过")
+            else:
+                conn.execute(
+                    "INSERT INTO drama_material_asset "
+                    "(drama_id, playlet_id, platform, video_url, cover_url, source, raw_payload) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (drama_id, playlet_id, platform, asset.get("video_url"),
+                     asset.get("cover_url"), asset.get("source"),
+                     json.dumps(asset.get("raw"), ensure_ascii=False) if asset.get("raw") else None),
+                )
+                debug(f"[material-preview] 本地 INSERT 成功 playlet_id={playlet_id} materialId={material_id}")
+    except Exception as e:
+        log(f"  ⚠️ [material-preview] 本地 SQLite 写入失败 playlet_id={playlet_id}: {e}")
+
+    # 远端 MySQL 单独 try，失败不影响本地
+    _upsert_material_asset_remote(playlet_id, platform, asset)
+
+
 def upsert_ranking(conn: sqlite3.Connection, playlet_id: str, platform: str,
                     rank: int, heat_value: float, material_count: int,
                     invest_days: int, snapshot_date: str):
@@ -600,6 +783,16 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
                 country_list = detail.get("countryList", [])
                 language = detect_language(description, country_list)
                 upsert_drama(conn, detail, language)
+
+                # [material-preview] 取最新 1 条素材并双写 SQLite + 远端 MySQL
+                # 不影响主流程：fetch / upsert 都包了 try/except
+                asset = try_fetch_material_preview(cookie, playlet_id, headers)
+                if asset:
+                    upsert_material_asset(conn, playlet_id, platform_name, asset)
+                    debug("  ⏳ [material-preview] 等待1秒...")
+                    time.sleep(1)
+                else:
+                    debug(f"[material-preview] 无可入库素材 playletId={playlet_id}")
 
                 consume_num = detail.get("consumeNum", consume_num)
                 material_cnt = detail.get("materialCnt", material_cnt)
