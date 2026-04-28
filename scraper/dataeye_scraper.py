@@ -49,11 +49,12 @@ ERROR_LOG = LOG_DIR / "error_log.txt"
 # ---------------------------------------------------------------------------
 # 平台列表
 # ---------------------------------------------------------------------------
-PLATFORMS = [
+# 兜底硬编码（仅当 platforms 表读取失败时使用，正常情况下走数据库）
+FALLBACK_PLATFORMS = [
     {"name": "ShortMax",  "productIds": [365084, 365123]},
     {"name": "MoboShort", "productIds": [485195, 485198]},
     {"name": "MoreShort", "productIds": [393179, 445748]},
-    {"name": "MyMuse",    "productIds": [3333645]},
+    {"name": "MyMuse",    "productIds": [2974116]},
     {"name": "LoveShots", "productIds": [365099, 365365]},
     {"name": "ReelAI",    "productIds": [390514, 392263]},
     {"name": "HiShort",   "productIds": [413255, 413256]},
@@ -61,7 +62,66 @@ PLATFORMS = [
     {"name": "Storeel",   "productIds": [465334, 465335]},
     {"name": "iDrama",    "productIds": [2955897, 2953006]},
     {"name": "StardustTV","productIds": [453499, 446088]},
+    {"name": "DramaWave", "productIds": [483859, 486163]},
 ]
+
+
+def load_platforms_from_db() -> list[dict]:
+    """从 platforms 表读取启用的平台。读不到 / 出错时回落硬编码。
+
+    返回结构:
+      [
+        {
+          "name":         "DramaWave",   # 显示名（同时也写入 ranking_snapshot.platform）
+          "key":          "dramawave",   # 内部小写 key
+          "platform_id":  12,            # platforms.id (内部主键)
+          "productIds":   [483859, 486163],  # DataEye listPlayletDistribution 用的 productId
+        },
+        ...
+      ]
+    """
+    try:
+        if not DB_PATH.exists():
+            log("⚠️  数据库未初始化，使用硬编码平台兜底")
+            return _wrap_fallback()
+        conn = sqlite3.connect(str(DB_PATH), timeout=10)
+        try:
+            rows = conn.execute(
+                "SELECT id, name, product_ids, is_active FROM platforms "
+                "WHERE is_active = 1 ORDER BY id ASC"
+            ).fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            log("⚠️  platforms 表为空，使用硬编码平台兜底")
+            return _wrap_fallback()
+        out: list[dict] = []
+        for pid, name, product_ids_raw, _active in rows:
+            try:
+                product_ids = json.loads(product_ids_raw or "[]")
+                if not isinstance(product_ids, list):
+                    product_ids = []
+            except json.JSONDecodeError:
+                product_ids = []
+            out.append({
+                "name": name,
+                "key": (name or "").lower(),
+                "platform_id": int(pid),
+                "productIds": [int(x) for x in product_ids if str(x).isdigit()],
+            })
+        debug(f"从数据库加载 {len(out)} 个启用平台: " + ", ".join(p["name"] for p in out))
+        return out
+    except Exception as e:
+        log(f"⚠️  读取 platforms 表失败({e})，使用硬编码兜底")
+        return _wrap_fallback()
+
+
+def _wrap_fallback() -> list[dict]:
+    return [
+        {"name": p["name"], "key": p["name"].lower(),
+         "platform_id": None, "productIds": list(p["productIds"])}
+        for p in FALLBACK_PLATFORMS
+    ]
 
 # ---------------------------------------------------------------------------
 # API 地址
@@ -441,9 +501,24 @@ def insert_trend(conn: sqlite3.Connection, playlet_id: str, platform: str,
 def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
                     platform: dict, snapshot_date: str):
     platform_name = platform["name"]
-    product_ids = platform["productIds"]
-    log(f"📡 正在抓取 {platform_name} (productIds: {product_ids})")
-    debug(f"scrape_platform() 开始执行: platform={platform_name}, date={snapshot_date}")
+    platform_key  = platform.get("key") or platform_name.lower()
+    platform_id   = platform.get("platform_id")
+    product_ids   = platform["productIds"]
+
+    if not product_ids:
+        log(f"❌ {platform_name} platform_id not configured (platforms.product_ids 为空) — 跳过")
+        log_error(f"{platform_name} platform_id not configured")
+        return
+
+    # 平台开始计数（汇总日志用）
+    p_started = stats["success"] + stats["fail"]
+    drama_started = stats["new_drama"]
+    upd_started   = stats["updated"]
+
+    log(f"📡 正在抓取 {platform_name} | key={platform_key} platform_id={platform_id} "
+        f"productIds={product_ids} date={snapshot_date}")
+    debug(f"scrape_platform() 开始: platform_name={platform_name}, key={platform_key}, "
+          f"platform_id={platform_id}, productIds={product_ids}, date={snapshot_date}")
 
     # Step 1: 获取榜单 — 多个 productId 合并去重
     all_items: dict[str, dict] = {}
@@ -560,7 +635,10 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
         log(f"  ⚠️  {platform_name} sync flush 异常（不影响本地）：{e}")
         log_error(f"sync flush {platform_name}: {traceback.format_exc()}")
 
-    log(f"  🏁 {platform_name} 完成")
+    p_total = (stats["success"] + stats["fail"]) - p_started
+    p_new   = stats["new_drama"] - drama_started
+    p_upd   = stats["updated"]   - upd_started
+    log(f"  🏁 {platform_name} 完成 | 处理={p_total} 新增剧={p_new} 更新剧={p_upd}")
 
 
 def backfill_trends(cookie: str, headers: dict, conn: sqlite3.Connection):
@@ -609,7 +687,7 @@ def backfill_trends(cookie: str, headers: dict, conn: sqlite3.Connection):
     log("📈 趋势补抓完成")
 
 
-def run(backfill_days: int = 0):
+def run(backfill_days: int = 0, only_platform: str | None = None):
     log("=" * 60)
     log("DramaTracker DataEye 数据抓取")
     log("=" * 60)
@@ -619,6 +697,8 @@ def run(backfill_days: int = 0):
     debug(f"DB_PATH: {DB_PATH}")
     debug(f"CONFIG_PATH: {CONFIG_PATH}")
     debug(f"langdetect 可用: {detect is not None}")
+    if only_platform:
+        log(f"🎯 单平台模式: 仅抓取 {only_platform}")
 
     cookie = load_cookie()
     headers = build_headers(cookie)
@@ -642,9 +722,30 @@ def run(backfill_days: int = 0):
     log(f"📅 抓取当天榜单: {today_str}")
     log(f"{'─' * 40}")
 
-    for plat_idx, platform in enumerate(PLATFORMS, 1):
+    # 优先从 platforms 表读取启用平台；失败 fallback 硬编码
+    all_platforms = load_platforms_from_db()
+
+    # --platform 单平台过滤（按 name / key，大小写不敏感）
+    if only_platform:
+        norm = only_platform.strip().lower()
+        platforms_to_run = [p for p in all_platforms
+                            if p["name"].lower() == norm or p.get("key") == norm]
+        if not platforms_to_run:
+            log(f"❌ 未找到平台 '{only_platform}'。可用: " +
+                ", ".join(p["name"] for p in all_platforms))
+            log_error(f"--platform '{only_platform}' not found in platforms table")
+            conn.close()
+            sys.exit(2)
+        log(f"📋 单平台模式过滤后 {len(platforms_to_run)} 个: " +
+            ", ".join(p["name"] for p in platforms_to_run))
+    else:
+        platforms_to_run = all_platforms
+        log(f"📋 启用平台共 {len(platforms_to_run)} 个: " +
+            ", ".join(p["name"] for p in platforms_to_run))
+
+    for plat_idx, platform in enumerate(platforms_to_run, 1):
         try:
-            log(f"\n--- 平台 [{plat_idx}/{len(PLATFORMS)}] ---")
+            log(f"\n--- 平台 [{plat_idx}/{len(platforms_to_run)}] ---")
             scrape_platform(cookie, headers, conn, platform, today_str)
         except SystemExit:
             raise
@@ -693,6 +794,8 @@ if __name__ == "__main__":
     print(f"[启动] 命令行参数: {sys.argv}", flush=True)
     parser = argparse.ArgumentParser(description="DataEye 海外短剧数据抓取")
     parser.add_argument("--backfill", type=int, default=0, help="补抓过去N天数据")
+    parser.add_argument("--platform", type=str, default=None,
+                        help="只抓取指定平台 (按 platforms.name 或 key, 大小写不敏感, 例: --platform DramaWave)")
     args = parser.parse_args()
-    print(f"[启动] 解析参数: backfill={args.backfill}", flush=True)
-    run(backfill_days=args.backfill)
+    print(f"[启动] 解析参数: backfill={args.backfill}, platform={args.platform}", flush=True)
+    run(backfill_days=args.backfill, only_platform=args.platform)

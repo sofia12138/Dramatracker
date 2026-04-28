@@ -41,7 +41,7 @@ interface Props {
   title: string;
 }
 
-const FALLBACK_PLATFORMS = ['all', 'trending', 'new', 'ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
+const FALLBACK_PLATFORMS = ['all', 'trending', 'new', 'ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV', 'DramaWave'];
 const PLATFORM_LABELS: Record<string, string> = { all: '总榜', trending: '趋势榜', new: '新剧榜' };
 // 这三个是跨平台汇总榜，不是平台名
 const CROSS_PLATFORM_TABS = new Set(['all', 'trending', 'new']);
@@ -200,7 +200,7 @@ export default function RankingTable({ type, title }: Props) {
   const [newMeta, setNewMeta] = useState<{ total_count: number; classified_count: number; pending_count: number } | null>(null);
 
   useEffect(() => {
-    apiFetch('/api/platforms')
+    apiFetch('/api/platforms', { cache: 'no-store' })
       .then(r => r.json())
       .then((list: { name: string; is_active: number }[]) => {
         const active = list.filter(p => p.is_active).map(p => p.name);

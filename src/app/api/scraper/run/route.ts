@@ -42,12 +42,16 @@ export async function POST(request: NextRequest) {
   const auth = checkPermission(request, 'manage_settings');
   if (isErrorResponse(auth)) return auth;
 
-  const { backfill } = await request.json().catch(() => ({ backfill: 0 }));
+  const { backfill, platform } = await request.json().catch(() => ({ backfill: 0, platform: undefined }));
 
   const scriptPath = path.join(process.cwd(), 'scraper', 'dataeye_scraper.py');
   const args = ['scraper/dataeye_scraper.py'];
   if (backfill && backfill > 0) {
     args.push('--backfill', String(backfill));
+  }
+  // 单平台抓取（仅当传入 platform 字符串时）；脚本会按 platforms.name/key 大小写不敏感匹配
+  if (typeof platform === 'string' && platform.trim()) {
+    args.push('--platform', platform.trim());
   }
 
   const readable = new ReadableStream({

@@ -49,7 +49,8 @@ interface ConfirmInfo {
   classifyType: string;
 }
 
-const PLATFORMS = ['ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV'];
+// 仅作为 /api/platforms 拉取失败 / 尚未返回时的兜底；正常情况下会被覆写
+const FALLBACK_PLATFORMS = ['ShortMax', 'MoboShort', 'MoreShort', 'MyMuse', 'LoveShots', 'ReelAI', 'HiShort', 'NetShort', 'Storeel', 'iDrama', 'StardustTV', 'DramaWave'];
 
 function formatHeat(val: number): string {
   if (!val) return '0';
@@ -122,6 +123,7 @@ export default function ReviewPage() {
   const [scraping, setScraping] = useState(false);
   const [editingGenre, setEditingGenre] = useState<number | null>(null);
   const [aiGenreRunning, setAiGenreRunning] = useState(false);
+  const [platforms, setPlatforms] = useState<string[]>(FALLBACK_PLATFORMS);
   const toastId = useRef(0);
   const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const selectedPlatformRef = useRef(selectedPlatform);
@@ -236,6 +238,18 @@ export default function ReviewPage() {
 
   useEffect(() => { fetchCounts(); fetchScrapeStatus(); }, [fetchCounts, fetchScrapeStatus]);
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // 动态加载启用平台，确保平台管理新增的平台（如 DramaWave）会自动出现在 tab 列表
+  useEffect(() => {
+    apiFetch('/api/platforms', { cache: 'no-store' })
+      .then(r => r.json())
+      .then((list: { name: string; is_active: number }[]) => {
+        if (!Array.isArray(list)) return;
+        const active = list.filter(p => p.is_active).map(p => p.name);
+        if (active.length > 0) setPlatforms(active);
+      })
+      .catch(() => { /* 静默兜底到 FALLBACK_PLATFORMS */ });
+  }, []);
 
   const selectType = (dramaId: number, type: string) => {
     setPendingType(prev => {
@@ -636,7 +650,7 @@ export default function ReviewPage() {
             {overallTotal}
           </span>
         </button>
-        {PLATFORMS.map(p => {
+        {platforms.map(p => {
           const count = getPlatformCount(p);
           const active = selectedPlatform === p;
           return (

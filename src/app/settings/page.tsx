@@ -63,6 +63,7 @@ export default function SettingsPage() {
   // Manual fetch
   const [fetching, setFetching] = useState(false);
   const [fetchLogs, setFetchLogs] = useState<string[]>([]);
+  const [singlePlatform, setSinglePlatform] = useState<string>('');
   const logRef = useRef<HTMLDivElement>(null);
 
   // Platform form
@@ -142,9 +143,13 @@ export default function SettingsPage() {
   };
 
   // --- Manual Fetch ---
-  const handleManualFetch = async (backfill = 0) => {
+  const handleManualFetch = async (backfill = 0, platform?: string) => {
     setFetching(true);
-    setFetchLogs([`[${new Date().toLocaleTimeString()}] 启动 Python 抓取脚本...${backfill > 0 ? ` (补抓${backfill}天)` : ''}`]);
+    const labelParts: string[] = [];
+    if (backfill > 0) labelParts.push(`补抓${backfill}天`);
+    if (platform)     labelParts.push(`仅 ${platform}`);
+    const label = labelParts.length ? ` (${labelParts.join(' / ')})` : '';
+    setFetchLogs([`[${new Date().toLocaleTimeString()}] 启动 Python 抓取脚本...${label}`]);
 
     const addLog = (msg: string) => {
       setFetchLogs(prev => [...prev, msg]);
@@ -152,10 +157,12 @@ export default function SettingsPage() {
     };
 
     try {
+      const body: { backfill: number; platform?: string } = { backfill };
+      if (platform) body.platform = platform;
       const res = await apiFetch('/api/scraper/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backfill }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -411,9 +418,33 @@ export default function SettingsPage() {
 
       {/* ====== 3. 手动抓取 ====== */}
       <div className="card space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <h2 className="text-base font-semibold text-primary-text">手动抓取</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* 单平台抓取（用于验证 / 临时回填） */}
+            <select
+              value={singlePlatform}
+              onChange={e => setSinglePlatform(e.target.value)}
+              disabled={fetching}
+              className="px-3 py-2 border border-primary-border rounded-lg bg-white text-xs text-primary-text focus:outline-none focus:border-primary-accent disabled:opacity-50"
+            >
+              <option value="">所有启用平台</option>
+              {platforms
+                .filter(p => p.is_active)
+                .map(p => (
+                  <option key={p.id} value={p.name}>{p.name}</option>
+                ))}
+            </select>
+            {singlePlatform && (
+              <button
+                onClick={() => handleManualFetch(0, singlePlatform)}
+                disabled={fetching}
+                className="px-3 py-2 border border-amber-300 text-amber-700 rounded-lg text-xs font-medium bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                title={`仅抓取 ${singlePlatform}（不影响其它平台）`}
+              >
+                抓取 {singlePlatform}
+              </button>
+            )}
             <button
               onClick={() => handleManualFetch(7)}
               disabled={fetching}
