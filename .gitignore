@@ -54,6 +54,15 @@ data - 副本/
 # 仓库根下的一次性数据迁移 / 调试脚本（_ 前缀），不纳入版本管理
 /_*.js
 /_*.py
+/_*.ps1
+/_*.json
+/_*.txt
+
+# 调试登录态 / cookie，含敏感信息，禁止提交
+/cookies.txt
+
+# 运行时同步失败队列（爬虫双写未送达的事件落盘），不纳入版本管理
+data/sync-failed.jsonl
 
 # prisma：项目实际使用 SQLite / MySQL，未启用 Prisma
 /prisma/
