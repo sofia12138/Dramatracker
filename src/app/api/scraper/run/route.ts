@@ -5,6 +5,7 @@ import path from 'path';
 import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 import { lockDbForScraper, unlockDbAfterScraper } from '@/lib/db';
 import { exportDailyDb } from '@/lib/export-daily';
+import { triggerMaterialsAsync } from '@/lib/trigger-materials';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
 
@@ -45,6 +46,7 @@ export async function POST(request: NextRequest) {
   const { backfill, platform } = await request.json().catch(() => ({ backfill: 0, platform: undefined }));
 
   const scriptPath = path.join(process.cwd(), 'scraper', 'dataeye_scraper.py');
+  const isFullScrape = !platform?.trim() && !(backfill && backfill > 0);
   const args = ['scraper/dataeye_scraper.py'];
   if (backfill && backfill > 0) {
     args.push('--backfill', String(backfill));
@@ -52,6 +54,10 @@ export async function POST(request: NextRequest) {
   // 单平台抓取（仅当传入 platform 字符串时）；脚本会按 platforms.name/key 大小写不敏感匹配
   if (typeof platform === 'string' && platform.trim()) {
     args.push('--platform', platform.trim());
+  }
+  // 全量抓取时跳过内嵌 Phase 2：素材抓取由 triggerMaterialsAsync 在抓取成功后单独触发
+  if (isFullScrape) {
+    args.push('--skip-materials');
   }
 
   const readable = new ReadableStream({
@@ -126,6 +132,11 @@ export async function POST(request: NextRequest) {
             send(`[系统] 每日数据已导出: ${exportResult.stats.snapshots} snapshots, ${exportResult.stats.dramas} dramas -> ${exportResult.path}\n`);
           }
           await triggerReviewAlert(send);
+          // 全量抓取成功后，后台触发素材抓取（单平台/backfill 不触发）
+          if (isFullScrape) {
+            const triggered = triggerMaterialsAsync('post_manual_scrape');
+            send(`[系统] 素材抓取已在后台启动${triggered ? '' : '（Python 不可用，已跳过）'}\n`);
+          }
         } else {
           updateConfigField('last_auto_fetch_status', 'failed');
         }

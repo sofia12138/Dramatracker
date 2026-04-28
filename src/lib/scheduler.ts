@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb, lockDbForScraper, unlockDbAfterScraper } from './db';
 import { exportDailyDb } from './export-daily';
+import { triggerMaterialsAsync } from './trigger-materials';
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
 let started = false;
@@ -95,7 +96,8 @@ function recoverStuckRunningStatus() {
 
 function runScraper() {
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-  const args = ['scraper/dataeye_scraper.py'];
+  // --skip-materials: Phase 2 素材抓取解耦到 triggerMaterialsAsync，不在主抓取流程里阻塞
+  const args = ['scraper/dataeye_scraper.py', '--skip-materials'];
 
   console.log(`[auto-scrape] 开始执行定时抓取...`);
   lockDbForScraper();
@@ -131,6 +133,8 @@ function runScraper() {
         console.log(`[auto-scrape] 每日导出完成: ${result.stats.snapshots} snapshots, ${result.stats.dramas} dramas -> ${result.path}`);
       }
       triggerReviewAlert();
+      // 全量抓取成功后，后台触发素材抓取（fire-and-forget）
+      triggerMaterialsAsync('post_auto_scrape');
     } else {
       updateConfigField('last_auto_fetch_status', 'failed');
     }
