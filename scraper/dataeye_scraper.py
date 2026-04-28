@@ -157,14 +157,16 @@ URL_SEARCH_CREATIVE = "https://oversea-v2.dataeye.com/api/playlet/creative/searc
 #   - 不允许伪造素材链接
 #   - 抓取失败不能影响剧集榜单主流程（fetch / upsert 都包 try/except）
 #   - 不触碰 drama / drama_review / is_ai_drama / genre_tags_*
-def fetch_material_preview(cookie: str, playlet_id: str, headers: dict) -> dict | None:
-    """调 searchCreative 拿这部剧 FIRST_SEEN 排序最新的 1 条素材。
+def fetch_material_preview(cookie: str, playlet_id: str, headers: dict,
+                            sort_by: str = "EXPOSURE_NUM") -> dict | None:
+    """调 searchCreative 拿这部剧曝光最高的 1 条素材（默认 EXPOSURE_NUM 排序）。
+    可传 sort_by='FIRST_SEEN' 切到"最新素材"模式。
     出错 / 无数据 / 无视频 URL 都返回 None。
     """
     payload = {
         "pageId": 1,
         "pageSize": 1,
-        "sortBy": "FIRST_SEEN",
+        "sortBy": sort_by,
         "showFlag": 0,
         "deduplicationBy": "SMART",
         "playletId": playlet_id,
@@ -205,15 +207,19 @@ def fetch_material_preview(cookie: str, playlet_id: str, headers: dict) -> dict 
         "media_name": media_name,
         "country_name": country_name,
         "first_seen": m.get("firstSeen"),
-        "source": f"dataeye:searchCreative" + (f" via {media_name}" if media_name else ""),
+        "exposure_num": m.get("exposureNum"),
+        "sort_by": sort_by,
+        "source": (f"dataeye:searchCreative[{sort_by}]"
+                   + (f" via {media_name}" if media_name else "")),
         "raw": m,
     }
 
 
-def try_fetch_material_preview(cookie: str, playlet_id: str, headers: dict) -> dict | None:
-    """主流程入口：包好异常，绝不让 material 抓取拖累 drama / ranking 主流程。"""
+def try_fetch_material_preview(cookie: str, playlet_id: str, headers: dict,
+                                sort_by: str = "EXPOSURE_NUM") -> dict | None:
+    """对外入口：包好异常，绝不让 material 抓取拖累 drama / ranking 主流程。"""
     try:
-        return fetch_material_preview(cookie, playlet_id, headers)
+        return fetch_material_preview(cookie, playlet_id, headers, sort_by=sort_by)
     except Exception as e:
         debug(f"[material-preview] fetch failed playletId={playlet_id}: {e}")
         return None
@@ -670,6 +676,93 @@ def upsert_material_asset(conn: sqlite3.Connection, playlet_id: str, platform: s
     _upsert_material_asset_remote(playlet_id, platform, asset)
 
 
+# ---------------------------------------------------------------------------
+# [material-preview] 阶段2：白名单素材抓取
+# ---------------------------------------------------------------------------
+# 圈选规则（产品确认）：
+#   只为人工已审核为 AI 真人剧 / AI 漫剧 的剧拉素材
+#   即 drama.is_ai_drama IN ('ai_real', 'ai_manga')
+#   且这部剧今天有 ranking_snapshot（保证它出现在某个榜单上）
+#   覆盖 6 个榜单：ai_real 总榜/趋势榜/新剧榜 + ai_manga 总榜/趋势榜/新剧榜
+#   （新剧榜里"待审核 NULL"那部分先不拉，等审核通过下次抓取再补）
+def fetch_materials_for_whitelist(conn: sqlite3.Connection, cookie: str,
+                                    headers: dict, snapshot_date: str,
+                                    sort_by: str = "EXPOSURE_NUM",
+                                    sleep_seconds: float = 1.0) -> dict:
+    """阶段2：扫白名单 → 逐部调 searchCreative → 双写 SQLite + 远端 MySQL。
+    返回统计 dict 用于汇总。"""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT d.playlet_id, d.title, d.is_ai_drama,
+               (SELECT rs.platform FROM ranking_snapshot rs
+                WHERE rs.playlet_id = d.playlet_id AND rs.snapshot_date = ?
+                ORDER BY rs.rank ASC LIMIT 1) AS top_platform
+        FROM drama d
+        WHERE d.is_ai_drama IN ('ai_real', 'ai_manga')
+          AND EXISTS (
+              SELECT 1 FROM ranking_snapshot rs
+              WHERE rs.playlet_id = d.playlet_id AND rs.snapshot_date = ?
+          )
+        ORDER BY d.is_ai_drama, d.playlet_id
+        """,
+        (snapshot_date, snapshot_date),
+    ).fetchall()
+
+    log(f"\n{'─' * 40}")
+    log(f"🎬 阶段2：白名单素材抓取（is_ai_drama IN ai_real/ai_manga）")
+    log(f"📋 白名单共 {len(rows)} 部剧（snapshot_date={snapshot_date}, sortBy={sort_by}）")
+    log(f"{'─' * 40}")
+
+    mat_stats = {"total": len(rows), "fetched": 0, "no_data": 0, "no_video": 0,
+                 "fetch_fail": 0, "local_insert": 0, "local_dup": 0,
+                 "remote_insert": 0, "remote_dup": 0}
+    for idx, (pid, title, ai_type, top_platform) in enumerate(rows, 1):
+        playlet_id = str(pid)
+        plat_label = top_platform or "DataEye"
+        title_short = (title or playlet_id)[:30]
+        try:
+            asset = try_fetch_material_preview(cookie, playlet_id, headers, sort_by=sort_by)
+            if not asset:
+                mat_stats["no_data"] += 1
+                log(f"  ⚪ [{idx}/{len(rows)}] {ai_type} 《{title_short}》无可用素材")
+            else:
+                mat_stats["fetched"] += 1
+                # 复用 upsert_material_asset 的去重 + 远端双写
+                # 通过对比日志计数器估算 insert vs dup（粗略：本次 INSERT 失败的归到 dup）
+                before_local = conn.execute(
+                    "SELECT COUNT(*) FROM drama_material_asset WHERE playlet_id=?",
+                    (playlet_id,)
+                ).fetchone()[0]
+                upsert_material_asset(conn, playlet_id, plat_label, asset)
+                after_local = conn.execute(
+                    "SELECT COUNT(*) FROM drama_material_asset WHERE playlet_id=?",
+                    (playlet_id,)
+                ).fetchone()[0]
+                if after_local > before_local:
+                    mat_stats["local_insert"] += 1
+                    log(f"  ✅ [{idx}/{len(rows)}] {ai_type} 《{title_short}》"
+                        f" 曝光={asset.get('exposure_num')} 渠道={asset.get('media_name')}")
+                else:
+                    mat_stats["local_dup"] += 1
+                    log(f"  ♻️  [{idx}/{len(rows)}] {ai_type} 《{title_short}》素材已是最新，跳过")
+            time.sleep(sleep_seconds)
+        except SystemExit:
+            raise
+        except Exception as e:
+            mat_stats["fetch_fail"] += 1
+            log(f"  ⚠️ [{idx}/{len(rows)}] 《{title_short}》素材抓取异常: {e}")
+            log_error(f"material-preview {playlet_id}: {traceback.format_exc()}")
+
+    conn.commit()
+    log(f"\n{'─' * 40}")
+    log(f"🎬 阶段2完成 | 白名单 {mat_stats['total']} 部")
+    log(f"   有素材: {mat_stats['fetched']}  本地新插: {mat_stats['local_insert']}  "
+        f"本地重复跳过: {mat_stats['local_dup']}")
+    log(f"   无数据: {mat_stats['no_data']}  抓取异常: {mat_stats['fetch_fail']}")
+    log(f"{'─' * 40}")
+    return mat_stats
+
+
 def upsert_ranking(conn: sqlite3.Connection, playlet_id: str, platform: str,
                     rank: int, heat_value: float, material_count: int,
                     invest_days: int, snapshot_date: str):
@@ -784,15 +877,8 @@ def scrape_platform(cookie: str, headers: dict, conn: sqlite3.Connection,
                 language = detect_language(description, country_list)
                 upsert_drama(conn, detail, language)
 
-                # [material-preview] 取最新 1 条素材并双写 SQLite + 远端 MySQL
-                # 不影响主流程：fetch / upsert 都包了 try/except
-                asset = try_fetch_material_preview(cookie, playlet_id, headers)
-                if asset:
-                    upsert_material_asset(conn, playlet_id, platform_name, asset)
-                    debug("  ⏳ [material-preview] 等待1秒...")
-                    time.sleep(1)
-                else:
-                    debug(f"[material-preview] 无可入库素材 playletId={playlet_id}")
+                # [material-preview] 注意：素材抓取已从主循环挪到阶段2
+                # （ranking 跑完后统一按白名单跑，参见 fetch_materials_for_whitelist）
 
                 consume_num = detail.get("consumeNum", consume_num)
                 material_cnt = detail.get("materialCnt", material_cnt)
@@ -915,7 +1001,9 @@ def backfill_trends(cookie: str, headers: dict, conn: sqlite3.Connection):
     log("📈 趋势补抓完成")
 
 
-def run(backfill_days: int = 0, only_platform: str | None = None):
+def run(backfill_days: int = 0, only_platform: str | None = None,
+        skip_materials: bool = False, materials_only: bool = False,
+        material_sort_by: str = "EXPOSURE_NUM"):
     log("=" * 60)
     log("DramaTracker DataEye 数据抓取")
     log("=" * 60)
@@ -927,6 +1015,10 @@ def run(backfill_days: int = 0, only_platform: str | None = None):
     debug(f"langdetect 可用: {detect is not None}")
     if only_platform:
         log(f"🎯 单平台模式: 仅抓取 {only_platform}")
+    if materials_only:
+        log(f"🎬 仅素材模式: 跳过 ranking/drama/trend，只跑阶段2素材抓取")
+    elif skip_materials:
+        log(f"⏭️  跳过素材模式: 只跑 ranking/drama/trend，不抓素材")
 
     cookie = load_cookie()
     headers = build_headers(cookie)
@@ -944,6 +1036,28 @@ def run(backfill_days: int = 0, only_platform: str | None = None):
         log("ℹ️  未配置 DT_SYNC_TOKEN，仅本地 SQLite 写入（不同步线上）")
 
     today_str = datetime.now().strftime("%Y-%m-%d")
+
+    if materials_only:
+        # 仅素材模式：跳过阶段1，直接跑阶段2
+        try:
+            fetch_materials_for_whitelist(conn, cookie, headers, today_str,
+                                            sort_by=material_sort_by)
+        except SystemExit:
+            raise
+        except Exception as e:
+            log(f"❌ 阶段2（素材抓取）整体失败: {e}")
+            log_error(f"materials_only: {traceback.format_exc()}")
+        if sync_buffer.is_enabled():
+            try: sync_buffer.flush(label="materials_only")
+            except Exception as e: log(f"⚠️  sync flush 异常：{e}")
+        debug("关闭数据库连接")
+        conn.close()
+        log(f"\n{'=' * 60}")
+        log("📊 仅素材模式完成")
+        log(f"{'=' * 60}")
+        if sync_buffer.is_enabled():
+            sync_buffer.report()
+        return
 
     # 无论是否 backfill，ranking 只抓今天（接口只返回当前排名）
     log(f"\n{'─' * 40}")
@@ -980,6 +1094,17 @@ def run(backfill_days: int = 0, only_platform: str | None = None):
         except Exception as e:
             log(f"❌ 平台 {platform['name']} 整体失败: {e}")
             log_error(f"platform {platform['name']}: {traceback.format_exc()}")
+
+    # ── 阶段2：素材抓取（白名单：is_ai_drama IN ai_real/ai_manga）
+    if not skip_materials:
+        try:
+            fetch_materials_for_whitelist(conn, cookie, headers, today_str,
+                                            sort_by=material_sort_by)
+        except SystemExit:
+            raise
+        except Exception as e:
+            log(f"❌ 阶段2（素材抓取）整体失败: {e}")
+            log_error(f"stage2 material: {traceback.format_exc()}")
 
     # backfill 模式：仅补抓趋势历史数据
     if backfill_days > 0:
@@ -1024,6 +1149,20 @@ if __name__ == "__main__":
     parser.add_argument("--backfill", type=int, default=0, help="补抓过去N天数据")
     parser.add_argument("--platform", type=str, default=None,
                         help="只抓取指定平台 (按 platforms.name 或 key, 大小写不敏感, 例: --platform DramaWave)")
+    parser.add_argument("--skip-materials", action="store_true",
+                        help="跳过阶段2素材抓取（只跑 ranking/drama/trend）")
+    parser.add_argument("--materials-only", action="store_true",
+                        help="只跑阶段2素材抓取（跳过 ranking/drama/trend，适合审核员标完后单独补素材）")
+    parser.add_argument("--material-sort-by", type=str, default="EXPOSURE_NUM",
+                        choices=["EXPOSURE_NUM", "FIRST_SEEN"],
+                        help="素材排序：EXPOSURE_NUM=曝光最高（默认）/ FIRST_SEEN=最新出现")
     args = parser.parse_args()
-    print(f"[启动] 解析参数: backfill={args.backfill}, platform={args.platform}", flush=True)
-    run(backfill_days=args.backfill, only_platform=args.platform)
+    print(f"[启动] 解析参数: backfill={args.backfill}, platform={args.platform}, "
+          f"skip_materials={args.skip_materials}, materials_only={args.materials_only}, "
+          f"material_sort_by={args.material_sort_by}", flush=True)
+    if args.skip_materials and args.materials_only:
+        print("[启动] ❌ --skip-materials 与 --materials-only 互斥", flush=True)
+        sys.exit(2)
+    run(backfill_days=args.backfill, only_platform=args.platform,
+        skip_materials=args.skip_materials, materials_only=args.materials_only,
+        material_sort_by=args.material_sort_by)
