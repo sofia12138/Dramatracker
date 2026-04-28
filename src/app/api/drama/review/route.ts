@@ -4,6 +4,7 @@ import { checkPermission, isErrorResponse } from '@/lib/api-auth';
 import { getPendingReviewTotal, getPendingReviewCounts } from '@/lib/review-count';
 import { isMysqlMode, query } from '@/lib/mysql';
 import { listPendingReview, batchClassifyDramas } from '@/lib/repositories/dramaRepository';
+import { triggerMaterialsAsync } from '@/lib/trigger-materials';
 
 export async function GET(request: NextRequest) {
   const auth = checkPermission(request, 'review_drama');
@@ -127,6 +128,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'ids and is_ai_drama required' }, { status: 400 });
     }
 
+    // 记录审核前待审核总数（用于判断 N→0 触发条件）
+    const prevPendingTotal = await getPendingReviewTotal();
+
     // ── MySQL 模式：写 drama_review 表，不碰 drama.is_ai_drama ─────────────────
     if (isMysqlMode()) {
       const updated = await batchClassifyDramas(ids, is_ai_drama);
@@ -147,11 +151,18 @@ export async function POST(request: NextRequest) {
          GROUP BY rs.platform ORDER BY count DESC`
       );
 
-      console.log(`[review/mysql] batch classify ids=[${ids}] as ${is_ai_drama} updated=${updated}`);
+      const newTotal = Number(countRow?.total ?? 0);
+      console.log(`[review/mysql] batch classify ids=[${ids}] as ${is_ai_drama} updated=${updated} pending: ${prevPendingTotal}→${newTotal}`);
+
+      // 待审核 N→0：后台触发素材抓取（fire-and-forget，失败不影响响应）
+      if (prevPendingTotal > 0 && newTotal === 0) {
+        triggerMaterialsAsync('pending_review_cleared');
+      }
+
       return NextResponse.json({
         success: true,
         updated,
-        counts: { total: countRow?.total ?? 0, platformCounts: platformCountRows },
+        counts: { total: newTotal, platformCounts: platformCountRows },
       });
     }
 
@@ -162,9 +173,14 @@ export async function POST(request: NextRequest) {
       `UPDATE drama SET is_ai_drama = ?, updated_at = datetime('now') WHERE id IN (${placeholders})`
     ).run(is_ai_drama, ...ids);
 
-    console.log(`[review] batch classify ids=[${ids}] as ${is_ai_drama} changes=${result.changes}`);
-
     const counts = await getPendingReviewCounts();
+    console.log(`[review] batch classify ids=[${ids}] as ${is_ai_drama} changes=${result.changes} pending: ${prevPendingTotal}→${counts.total}`);
+
+    // 待审核 N→0：后台触发素材抓取（fire-and-forget，失败不影响响应）
+    if (prevPendingTotal > 0 && counts.total === 0) {
+      triggerMaterialsAsync('pending_review_cleared');
+    }
+
     return NextResponse.json({ success: true, updated: result.changes, counts });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
